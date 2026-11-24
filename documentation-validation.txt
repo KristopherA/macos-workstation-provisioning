@@ -1,0 +1,102 @@
+D18 draft5 documentation lock record
+24 November 2026, local time.
+Locked to d18 draft5. PARTIAL, not Mac-validated.
+These documents are not a production approval and are not authority to operate a Mac.
+They were copied from the d18 draft4 staging set and updated to this approved d18 draft5 archive. Draft5 is a text-only cleanup of draft4. Module 5 and module 6 remain documented. The first-login flow remains documented.
+
+STEP 0 pre-edit checks for this lock
+The five locked documentation files in the documentation folder still matched the d18 draft3 lock hashes, all mode 0444:
+4c1791ff13f0266d94c91646cd646e090f3d596641ad6d566e3ddc6b1c9e738b documentation-plan.txt
+8ef16fc6b04356246a912d031c248d0dc0641c0088896d7df2ae902f0d1e95c2 documentation-runbook.txt
+ca873a1cac7b7263eddd2f3182d733545f2a77f5f5dc190b8ed5dbd7a689a47a documentation-config-worksheet.txt
+6651d80c924d6d37f95931b4c913352662d07f942d1ce86759a1ff3e3849499f documentation-coverage-matrix.txt
+d212e8c5e26aa30be1e02533411ad0bb880efdc96ff2694df65f3aaf8a3476dd documentation-validation.txt
+The D18 documentation staging folder already held the d18 draft4 staging set, all mode 0644:
+1a5762980b797522a6d3d769aec1d47331a4a11dcf1cf541e438e4dbac4a86b8 documentation-plan.txt
+7b8e5414586f3c46708c89e593e07fda60fd9601e55b01d63a3ad8264bc7436f documentation-runbook.txt
+658a4e9ae9b97532cbba9d4a7a3c578890d882dccf7f45bfd554f5c4ff5ab46c documentation-config-worksheet.txt
+3ad47e3189965705227fc03ca67509e16c6a3a2a27ea4b45ef53328f5d3648fe documentation-coverage-matrix.txt
+305f09beabb4994ad1e65eee33a1dd20286758df094d8da5c64ac35d8f8264c1 documentation-validation.txt
+The d18 draft5 archive macos-provisioning-suite-code-snapshot-d18.tar hashed ae0ccc3fd55331372bcb219bb602fd37a697904d42ecbf5f99d513796bc57241, mode 0444, size 860160 bytes, label 0.18-d18-draft5.
+The d18 draft4 archive hashed 1197660874229cd016c199d9a013824e96fc778eb58c383f8ada3fcbf4103c09, mode 0444, size 860160 bytes, label 0.18-d18-draft4. That archive was not reused for draft5.
+The d18 draft3 archive hashed 2c42d7c526a3c60b40f136b62a99b1cde5b4aa4d2e992a5885379af1787dde4b, mode 0444, size 860160 bytes, label 0.18-d18-draft3.
+The d18 draft2 archive hashed 8164be5897c2579dc773886ebdc9a384c8bd0c428bbd2fd25f872c9cc5582dbd, mode 0444, size 860160 bytes, label 0.18-d18-draft2.
+The d18 draft1 archive hashed e54f1dd50969e1691333d5e6fb45e83b4960438063ed8d9c6adc7544f0ac2ca7, mode 0444, size 860160 bytes, label 0.18-d18-draft1.
+No STOP condition on those identities. The staged files were updated in the D18 documentation staging folder at mode 0644 before this lock.
+
+Immutable evidence
+Archive macos-provisioning-suite-code-snapshot-d18.tar
+SHA256 ae0ccc3fd55331372bcb219bb602fd37a697904d42ecbf5f99d513796bc57241
+Mode 0444. Size 860160 bytes. 24 members, all regular files of mode 0644: 22 shell files, the interface, and the manifest.
+Label 0.18-d18-draft5. The interface file in this archive is interface-plan-for-documentation.txt. UserSpace-firstlogin.txt is not a member.
+The requirements revision is unchanged.
+Sources read read-only: the d18 draft5 and draft4 archives, interface sections 1, 3, 5, 10, and 13e, the library, the launcher, workstationadmin-mod-admin-session.txt, the provided draft5-versus-draft4 diff, the draft5 author-run record, and the on-disk reviewer record.
+The archive is the source of truth. The provided diff is a pointer.
+No provisioner, help, test, parser, or Mac action was executed. The release scrub check was run only on a clean export copy, as a scanner that executes nothing it scans.
+
+Verified delta from d18 draft4
+An independent extract-and-diff of all 24 members found two files byte-identical (UserSpace-audit.txt and workstationadmin-test-harness.txt) and 22 files changed. The provided unified diff matches those change lines.
+The change is comment and text only. Interface line 1 is now "macOS provisioning suite - technical interface" and no longer names a draft or a candidate status. Restricted-distribution file-header comments are now generic. The library version label is 0.18-d18-draft5. The manifest title, label and notes match. Across the 22 script files, the only executable-line change is the library version label. No other behaviour, policy key, status, exit code or file layout changed. Product behaviour is unchanged. HARNESS_BUDGET remains 2100. The launcher header still says DRAFT d18 for the enabled and disabled apply paths.
+
+Verified earlier d18 draft4 delta from draft3, now included in this archive
+An independent extract-and-diff of draft4 against draft3 found 21 files byte-identical and three files changed: code-manifest.txt, interface-plan-for-documentation.txt, and workstationadmin-lib.txt. The change is comment and text only. Interface header lines 2, 3, and 6 were made generic. Line 2 reads "Interface reference for the documentation of this suite." Line 3 names WSP_SUITE_VERSION and the archive sha256 as identity. In that draft, interface line 1 still named a draft and a candidate status. The library version label in that draft was 0.18-d18-draft4. Product behaviour is unchanged. HARNESS_BUDGET remains 2100.
+
+Verified earlier d18 draft3 delta from draft2, now included in this archive
+An independent extract-and-diff of draft3 against draft2 found 21 files byte-identical and three files changed: code-manifest.txt, interface-plan-for-documentation.txt, and workstationadmin-lib.txt. The change is comment and text only. A time-zone name in the interface header and the manifest is replaced by generic wording ("local time" and "the local time zone"). The library version label in that draft was 0.18-d18-draft3. Product behaviour is unchanged. HARNESS_BUDGET remains 2100.
+
+Verified earlier d18 draft2 delta from draft1, now included in this archive
+An independent extract-and-diff of draft2 against draft1 found 18 files byte-identical and six files changed: code-manifest.txt, interface-plan-for-documentation.txt, workstationadmin-lib.txt, workstationadmin-mod-filevault.txt, workstationadmin-mod-names.txt, and workstationadmin-test-harness.txt. That round was comment-only, plus one new harness test, T1b, which sets the fixture root to an existing folder outside /tmp and still takes the same refusal branch with exit 4. The author-run pass count rose from 509 to 510 because of that test. Draft3, draft4 and draft5 do not change that test.
+
+Approval
+The reviewer record, section D18 DRAFT5 DIFF CHECK, states APPROVED PARTIAL, 0 blockers, on ae0ccc3fd55331372bcb219bb602fd37a697904d42ecbf5f99d513796bc57241, label 0.18-d18-draft5, and not Mac-validated. That section states that draft5 supersedes draft4 and is the release-test candidate. This documentation task did not itself perform that review. Publishing remains the owner's decision.
+
+Author evidence, attributed only
+D18 author evidence on this draft5 tar, from the author-run record, reports gate-exit 0, pass=510, fail=0, runs=1692, timeouts=0, wall 2774.515 seconds, stall_total 1150 seconds, ticker_max_gap 418 seconds, and active 1624 seconds. The finished record is dated 24 November 2026, 09:01:32 local time. The author record states there was no mutation chain, because the review is diff-only. The harness record states that a run with stall_total greater than 5 seconds is not a clean pass. The tar hash before and after the run is ae0ccc3fd55331372bcb219bb602fd37a697904d42ecbf5f99d513796bc57241. This is author evidence, not independent tester evidence and not Mac validation. This documentation task did not rerun the suite.
+
+Scope confirmed from the archive
+Apply is enabled for accounts (registration and guided Settings only), names, firewall, ssh, ard, power, updates, userprefs, firstlogin, shared, apps, and filevault.
+One launcher writer remains disabled: admin-session. The admin-session Dock and Finder settings are out of scope by design. That is the owner's decision of 19 November 2026, relayed by the coordinator. They are not unfinished work. The archive still lists that path as a restoration candidate, and the interface status line and the launcher header still say "Disabled is not fulfilled." These documents follow the owner's scope decision and record those archive lines as stale wording, not as remaining work.
+Module 6 enables FileVault only when it is off, after FILEVAULT_CONSENT=yes, a valid FILEVAULT_KEY_DIR, a valid asset tag, the root apply gate, the launcher APPLY, and the module's own typed APPLY. The operator types the password into fdesetup. The NEW key is written only to <asset-tag>-FileVault-recovery-key.txt in FILEVAULT_KEY_DIR, mode 600, owner the operator. The key is never printed. FileVault already on: PENDING_CONSENT, no key exported. Both policy keys unset: PENDING_CONSENT, manual enable and save. A pre-check refusal is BLOCKED_POLICY and does not enable FileVault. A failure after the enable may require a hand-made personal key; the operator must not restart. key-external-import and restart-unlock-test remain manual. The first-login flow from d14 and d15 is unchanged in this archive and remains covered in these documents. Module 5 remains covered, including the d17 attach-cleanup trap.
+
+Stale interface lines
+Interface line 1 no longer names a draft or a candidate status. The earlier under-review clause and the leftover draft2 label in the interface introduction remain absent from this archive. Interface line 6 (section 1 status) says PARTIAL, that module 6 is included, that one path (admin-session) stays disabled, and "Disabled is not fulfilled. Not Mac-validated."
+Interface section 3 still lists admin-session Dock and Finder writes as a restoration candidate, and the interface and the launcher header still say "Disabled is not fulfilled." The admin-session module comment still says the writer is "not restored yet (module for a later freeze)." The owner decided on 19 November 2026 that the admin account does not need its Dock and Finder settings changed. These documents state that path is out of scope by design and is not unfinished work.
+Interface section 13e still contains a parenthetical question about operator versus root ownership of the key file. The owner closed that question on 18 November 2026 at 21:31 local time: the file is owned by the operator, mode 0600. Root-only ownership is not adopted.
+
+Differences between the earlier interface-changes file and the code
+The documents follow the archive. These differences were recorded at the d17 lock and did not stop that lock. Later d18 drafts did not change this code:
+1. Item A.1 says that when neither FILEVAULT_KEY_DIR nor FILEVAULT_CONSENT is set, the result is the earlier manual path (PENDING_CONSENT). The code and section 13e match that only when both keys are unset and FileVault is off. If only one key is set, or FILEVAULT_CONSENT is not exactly yes, or a folder, tag, or name check fails, the result is BLOCKED_POLICY, and FileVault is not enabled. These documents follow the code.
+2. Item A.4 abbreviates the folder refusals. The code and section 13e also refuse a value longer than 200 characters, a trailing slash, the prefixes /private, /tmp, /var, /usr, /bin, and /sbin, and the suite folder or a folder under it. These documents follow the code and section 13e.
+3. Section 13e still asks the reviewer whether the key file owner should be the operator or root. That question is closed, as stated above.
+4. Items E1-E6 correct the six d16 interface-changes gaps recorded in the d16 lock (package setuid, setgid, and sticky refusal; APP_SOURCE_DIR and /Applications trust checks; Developer ID OIDs; the stale d16 status line; S-3 partial-install wording; and Mac item M70). The reviewer record states that E1-E6 match the unchanged d16 module-5 code. These documents already followed the archive on those points in the d16 lock and keep that wording.
+
+Clarifications recorded
+The first-login notification rule from d15 is unchanged: the notification shows for each first-login run that stops at PENDING_CONSENT. A run without --firstlogin does not show a notification. The PENDING_CONSENT record detail ends with notify=shown (none) or notify=failed (not-found|other|timeout).
+Q1 for the key-file owner is closed: operator owner, mode 0600, chown -h.
+The owner's standing rule remains: no real-Mac testing until the suite is complete. Mac items stay in the files and out of status summaries.
+Time-zone names in these documents now use generic wording, "local time" or "the local time zone", to match the approved archive.
+
+Open residuals
+Q7 remains: a bad first-login consent record is still PENDING_CONSENT.
+The login-time LaunchAgent cannot complete apply by itself under Q9.
+Module 4, module 5, and module 6 behaviour on a real Mac, launchd behaviour, the notification on a real Mac, and Bash 3.2 on a Mac remain unvalidated.
+The reviewer record for d17 draft1 lists open Mac items M44-M59 (M53 replaces M43), M60-M70, and M71-M83. Earlier M1-M42 and the R4/R5 gates remain tracked. The d18 review records no new Mac items. Those items are not validated here. This document does not add a plan for real-Mac testing and does not add new mappings for those numbers. Real-Mac testing happens after the suite is complete.
+UNKNOWN and MANUAL evidence are never a pass.
+
+Preserved from prior locks
+42 requirements, 11 P groups, 34 reviewer decisions, the NEW-key save and separate import,
+test-feedback loop, manual review of reports before upload, STE wording, and honest partial scope.
+One launcher writer remains disabled and is out of scope by design. The FileVault key writer is restored in this draft.
+
+Documentation lock
+These five files are staged in the documentation staging folder at mode 0644 and locked in the documentation folder at mode 0444. This lock replaces the d18 draft3 documentation set.
+The earlier D17, D16, D15, and D14 documentation lock history is kept.
+The preserved d15-draft3 and d15-draft5 staging drafts were left untouched.
+The four sibling documentation SHA256 fingerprints follow after the clean-export scrub. This file has no recursive self-hash.
+Employer, vendor, and address scrub scan of all five files found zero hits after this d18 draft5 lock alignment, including time-zone abbreviations, the internal policy id, the owner's first name, and the former distribution headers.
+Export release-scrub, run on a fresh export of the 24 archive members plus these five documents: exit 0, hits=0 dochits=0 files=29 exempt=3.
+Locked to d18 draft5. PARTIAL, not Mac-validated.
+9e806723a3aeedd5d1b756cc3c1a5f8cba2de8e983ef73050be1f22b981bb594  documentation-plan.txt
+74f45713db58a8152ce38bd7431dd07446faccedf8c19e729d4ac29aec9c7dac  documentation-runbook.txt
+b0b23722bfdf3a90aa56f8836cf9b4f464ddab8a87bbd216493d2422a7464144  documentation-config-worksheet.txt
+83089883b97ca3ab3dce4de930c6ce4126fe3afc41f07b88619e718df2497dd4  documentation-coverage-matrix.txt

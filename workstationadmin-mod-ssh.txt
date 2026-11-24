@@ -1,0 +1,148 @@
+#!/bin/bash
+# workstationadmin-mod-ssh.txt - Remote Login allowlist R42
+# Account: workstationadmin via launcher.
+# Root: required (sudo).
+# Bash 3.2, stock macOS tools only.
+# Dry run (inspect) is the default; changes happen only with --mode apply.
+# No secret is ever accepted as an argument, written to a log or reported.
+# Requirements: R42 (P07, D17). Three SEPARATE checks: service state,
+# named-user allowlist (group com.apple.access_ssh = workstationadmin only),
+# remote-user Full Disk Access toggle (no documented CLI: consent gate).
+# Root: required for apply and for reading service state.
+# ---- trusted bootstrap (CR01) ------------------------------------------
+# Runs before anything else: fixed PATH, readonly EUID check, then trust checks
+# on the suite directory, every ancestor and the library, using only absolute
+# tool paths. The fixture hook is honoured only off macOS, as non-root, under a
+# canonical /tmp path; otherwise it is refused, never silently relaxed.
+set +x +a   # no tracing; no allexport (D3-03)
+# d14 (reviewer S1): every function that exists at this point was imported from the caller's environment (exported BASH_FUNC_*) or
+# defined by a BASH_ENV startup file; none is trusted, so all are discarded before the first tool name is resolved. BASH_ENV
+# itself has already been read by this shell (it cannot be cleared in time); unsetting it only protects the child shells.
+for _wsp_f in $(compgen -A function); do unset -f "$_wsp_f"; done
+unset BASH_ENV ENV
+PATH=/usr/bin:/bin:/usr/sbin:/sbin; export PATH
+case "${EUID:-x}" in ''|*[!0-9]*) echo "REFUSED: EUID unreadable" >&2; exit 4;; esac
+_wsp_os=$(/usr/bin/uname -s 2>/dev/null || /bin/uname -s)
+_wsp_fx=0
+if [ -n "${WSP_FIXTURE_ROOT:-}" ]; then
+  if [ "$_wsp_os" = Darwin ] || [ -d /System/Library/CoreServices ] || [ "$EUID" -eq 0 ]; then echo "REFUSED: fixture hook not allowed here" >&2; exit 4; fi
+  _wsp_c=$(cd "$WSP_FIXTURE_ROOT" 2>/dev/null && pwd -P) || { echo "REFUSED: fixture root" >&2; exit 4; }
+  case "$_wsp_c" in /tmp/?*) ;; *) echo "REFUSED: fixture root must canonically be under /tmp" >&2; exit 4;; esac
+  [ "$_wsp_c" = "${WSP_FIXTURE_ROOT%/}" ] || { echo "REFUSED: fixture root has a symlink" >&2; exit 4; }
+  _wsp_fx=1
+fi
+# Inherited suite-internal variables are discarded, including their export
+# attribute (documentation D4-1): unset removes both. Only the validated fixture hook stays.
+for _wsp_v in $(compgen -v WSP_); do case "$_wsp_v" in WSP_FIXTURE_ROOT) ;; *) unset "$_wsp_v";; esac; done
+[ "$_wsp_fx" -eq 1 ] || unset WSP_FIXTURE_ROOT
+_wsp_st() { if [ "$_wsp_os" = Darwin ]; then /usr/bin/stat -f "$1" "$2"; else /usr/bin/stat -c "$3" "$2"; fi; }
+_wsp_noacl() { # deny by default (D3-01): "+" refuses; "@" needs a one-line "ls -lde"
+  _wsp_l=$(/bin/ls -ld "$1" 2>/dev/null) || return 1
+  _wsp_l=${_wsp_l%% *}
+  case "$_wsp_l" in
+    ??????????|??????????.) return 0;;
+    ??????????@) _wsp_n=$(/bin/ls -lde "$1" 2>/dev/null) || return 1
+                 [ "$(printf '%s\n' "$_wsp_n" | /usr/bin/wc -l | /usr/bin/tr -d ' ')" = 1 ];;
+    *) return 1;;
+  esac
+}
+_wsp_trust() { # path: not symlink, no ACL, owner root|workstationadmin (fixture: caller), not group/world writable
+  [ -L "$1" ] && return 1
+  _wsp_noacl "$1" || return 1
+  _wsp_o=$(_wsp_st %Su "$1" %U) || return 1; _wsp_m=$(_wsp_st %Lp "$1" %a) || return 1
+  case "$_wsp_o" in root|workstationadmin) ;; *) [ "$_wsp_fx" -eq 1 ] && [ "$_wsp_o" = "$(/usr/bin/id -un)" ] || return 1;; esac
+  case "$_wsp_m" in *[2367]?|*[2367]) case "$_wsp_m" in 1???) [ -d "$1" ] && [ "$1" != "$_wsp_dir" ] || return 1;; *) return 1;; esac;; esac
+  return 0
+}
+case "$0" in /*) _wsp_self="$0";; *) _wsp_self="$(pwd -P)/$0";; esac
+_wsp_dir=$(cd "${_wsp_self%/*}" 2>/dev/null && pwd -P) || { echo "REFUSED: suite directory" >&2; exit 4; }
+_wsp_a="$_wsp_dir"
+while :; do _wsp_trust "$_wsp_a" || { echo "REFUSED: untrusted suite directory or ancestor" >&2; exit 4; }; [ "$_wsp_a" = / ] && break; _wsp_a=${_wsp_a%/*}; [ -n "$_wsp_a" ] || _wsp_a=/; done
+_wsp_lib="$_wsp_dir/workstationadmin-lib.txt"
+if ! { [ -f "$_wsp_lib" ] && _wsp_trust "$_wsp_lib"; }; then echo "REFUSED: library missing or untrusted" >&2; exit 4; fi
+_wsp_trust "$_wsp_dir/${_wsp_self##*/}" || { echo "REFUSED: entry script untrusted" >&2; exit 4; }
+# Residual risk: a process running as root or workstationadmin can still replace
+# files between this check and use. Those identities are trusted by design.
+# shellcheck source=/dev/null
+. "$_wsp_lib"
+WSP_MODULE="ssh"
+WSP_GATE_NEEDS=root
+wsp_parse_mode "$@"
+G=com.apple.access_ssh
+# Attribute reader: A_STATE = present | absent | unknown (CR09). "absent" only
+# when dscl fails with a not-found class; any other failure is unknown.
+attr() {
+  wsp_run _av dscl . -read "/Groups/$G" "$1"
+  if [ "$WSP_RC" -eq 0 ]; then
+    # exact label grammar (D3-05): "<Attr>:" then values; anything else unknown
+    case "$_av" in "$1:"*) A_STATE=present; wsp_words "${_av#"$1:"}"; A_VAL=$WSP_WORDS
+        case "$A_VAL" in *[!A-Za-z0-9._\ -]*) A_STATE=unknown; A_VAL="";; esac;;
+      *) A_STATE=unknown; A_VAL="";; esac
+  elif [ "$WSP_ERRCLASS" = not-found ]; then A_STATE=absent; A_VAL=""
+  else A_STATE=unknown; A_VAL=""; fi
+}
+# ssh_eval sets GSTATE = exact | differs | absent-group | unknown, plus OTHERS, NESTED
+ssh_eval() {
+  GSTATE=unknown; OTHERS=""; NESTED=""
+  attr RecordName
+  case "$A_STATE" in absent) GSTATE=absent-group; return;; unknown) return;; esac
+  attr GroupMembership; [ "$A_STATE" = unknown ] && return; mem="$A_VAL"
+  attr NestedGroups; [ "$A_STATE" = unknown ] && return; NESTED="$A_VAL"
+  attr GroupMembers; [ "$A_STATE" = unknown ] && return; guids="$A_VAL"
+  opguid=$(wsp_user_guid "$WSP_OPERATOR") || { GSTATE=unknown; return; }
+  has_op=0
+  for m in $mem; do if [ "$m" = "$WSP_OPERATOR" ]; then has_op=1; else OTHERS="$OTHERS $m"; fi; done
+  gu_ok=1
+  for g in $guids; do [ "$g" = "$opguid" ] || gu_ok=0; done
+  if [ "$has_op" -eq 1 ] && [ -z "$OTHERS" ] && [ -z "$NESTED" ] && [ "$gu_ok" -eq 1 ] && [ -n "$opguid" ]; then GSTATE=exact; else GSTATE=differs; fi
+}
+# 1. allowlist (record evidence only; effective SSH access is a manual test)
+ssh_eval
+wsp_words "$OTHERS"; n_oth=$WSP_NWORDS
+if [ "$GSTATE" = exact ]; then
+  wsp_status PENDING_CONSENT R42 ssh-allowlist "group record lists operator only (direct, nested, GUID); effective access unproven" operator-only operator-only record
+elif [ "$GSTATE" = unknown ]; then
+  wsp_status UNKNOWN R42 ssh-allowlist "group attributes not fully readable" operator-only unknown record
+elif [ "$WSP_MODE" != apply ]; then
+  wsp_status PROPOSED R42 ssh-allowlist "would set group to operator only; other direct members: $n_oth" operator-only "$GSTATE" record
+else
+  ok=1
+  if [ "$GSTATE" = absent-group ]; then wsp_run x dseditgroup -o create -q "$G"; [ "$WSP_RC" -eq 0 ] || ok=0; fi
+  wsp_run x dseditgroup -o edit -a "$WSP_OPERATOR" -t user "$G"; [ "$WSP_RC" -eq 0 ] || ok=0
+  if [ -n "$OTHERS$NESTED" ]; then
+    if wsp_confirm "Remove $n_oth other user(s) and any nested groups from SSH access (local rights unchanged)?" "REMOVE"; then
+      for m in $OTHERS; do wsp_run x dseditgroup -o edit -d "$m" -t user "$G"; [ "$WSP_RC" -eq 0 ] || ok=0; done
+      for g in $NESTED; do wsp_run x dseditgroup -o edit -d "$g" -t group "$G"; [ "$WSP_RC" -eq 0 ] || ok=0; done
+    fi
+  fi
+  ssh_eval
+  if [ "$GSTATE" = exact ] && [ "$ok" -eq 1 ]; then wsp_status CHANGED_VERIFIED R42 ssh-allowlist "group record re-read: operator only (effective access unproven)" operator-only operator-only record 0
+  elif [ "$GSTATE" = exact ]; then wsp_status FAILED R42 ssh-allowlist "record correct but an edit command failed" operator-only exact record
+  else wsp_status FAILED R42 ssh-allowlist "group not operator-only after edit (removal declined or failed)" operator-only "$GSTATE" record; fi
+fi
+# 2. service
+want=$(wsp_policy SSH_ENABLE) || want=""
+wsp_run st systemsetup -getremotelogin
+obs=unknown; if [ "$WSP_RC" -eq 0 ]; then case "$st" in "Remote Login: On") obs=on;; "Remote Login: Off") obs=off;; esac; fi
+if [ "$obs" = "unknown" ]; then
+  wsp_status PENDING_CONSENT R42 ssh-service "state unreadable; systemsetup may need Full Disk Access for the terminal (granted by operator in Settings)" on unknown effective-cli "$WSP_RC" "$WSP_ERRCLASS"
+elif [ "$obs" = "on" ]; then wsp_status ALREADY_CORRECT R42 ssh-service "Remote Login reported on (service state only)" on on effective-cli 0
+elif [ "$want" != "yes" ]; then wsp_status BLOCKED_POLICY R42 ssh-service "SSH_ENABLE not yes; route undecided (D17)" on off effective-cli 0
+elif [ "$WSP_MODE" != "apply" ]; then wsp_status PROPOSED R42 ssh-service "would enable Remote Login" on off effective-cli 0
+elif ssh_eval; [ "$GSTATE" != exact ]; then
+  wsp_status BLOCKED_POLICY R42 ssh-service "not enabled: allowlist is not operator-only (fail closed)" on off record
+else
+  wsp_run x systemsetup -f -setremotelogin on; set_rc=$WSP_RC; set_ec=$WSP_ERRCLASS
+  wsp_run st systemsetup -getremotelogin
+  [ "$WSP_RC" -eq 0 ] || st=""
+  if [ "$set_rc" -ne 0 ]; then
+    wsp_status FAILED R42 ssh-service "enable command failed (readback not used to certify)" on unknown effective-cli "$set_rc" "$set_ec"
+  else case "$st" in "Remote Login: On") wsp_status CHANGED_VERIFIED R42 ssh-service "enabled; readback on (not proof of remote access)" on on effective-cli 0;;
+    *) wsp_status PENDING_CONSENT R42 ssh-service "enable not confirmed; use System Settings, General, Sharing, Remote Login" on unknown effective-cli "$WSP_RC" "$WSP_ERRCLASS";; esac
+  fi
+fi
+# 3. remote-user FDA: no documented CLI. Never touch TCC.
+wsp_status PENDING_CONSENT R42 ssh-remote-fda "operator turns on Allow full disk access for remote users in Settings; no CLI evidence" on unknown manual
+wsp_status PENDING_CONSENT R42 ssh-positive-test "controlled client login as operator + synthetic protected fixture: manual" "" "" manual
+wsp_status PENDING_CONSENT R42 ssh-negative-test "excluded admin with valid credentials must be rejected: manual; do not grant it rights" "" "" manual
+wsp_finish

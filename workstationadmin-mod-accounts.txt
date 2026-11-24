@@ -1,0 +1,171 @@
+#!/bin/bash
+# workstationadmin-mod-accounts.txt - additional admin accounts R03 R04
+# Account: workstationadmin via launcher.
+# Root: required (sudo) for apply.
+# Bash 3.2, stock macOS tools only.
+# Dry run (inspect) is the default; changes happen only with --mode apply.
+# No secret is ever accepted as an argument, written to a log or reported.
+# Requirements: R03 R04 (P02). Credential flow: GUIDED. This module never reads,
+# stores or passes a password. Account creation happens in System Settings >
+# Users & Groups, which collects the password in Apple's own UI. The module
+# collects display name, short name and purpose, validates them, then verifies.
+# The sysadminctl route was removed in this draft: it put names in argv.
+# ---- trusted bootstrap (CR01) ------------------------------------------
+# Runs before anything else: fixed PATH, readonly EUID check, then trust checks
+# on the suite directory, every ancestor and the library, using only absolute
+# tool paths. The fixture hook is honoured only off macOS, as non-root, under a
+# canonical /tmp path; otherwise it is refused, never silently relaxed.
+set +x +a   # no tracing; no allexport (D3-03)
+# d14 (reviewer S1): every function that exists at this point was imported from the caller's environment (exported BASH_FUNC_*) or
+# defined by a BASH_ENV startup file; none is trusted, so all are discarded before the first tool name is resolved. BASH_ENV
+# itself has already been read by this shell (it cannot be cleared in time); unsetting it only protects the child shells.
+for _wsp_f in $(compgen -A function); do unset -f "$_wsp_f"; done
+unset BASH_ENV ENV
+PATH=/usr/bin:/bin:/usr/sbin:/sbin; export PATH
+case "${EUID:-x}" in ''|*[!0-9]*) echo "REFUSED: EUID unreadable" >&2; exit 4;; esac
+_wsp_os=$(/usr/bin/uname -s 2>/dev/null || /bin/uname -s)
+_wsp_fx=0
+if [ -n "${WSP_FIXTURE_ROOT:-}" ]; then
+  if [ "$_wsp_os" = Darwin ] || [ -d /System/Library/CoreServices ] || [ "$EUID" -eq 0 ]; then echo "REFUSED: fixture hook not allowed here" >&2; exit 4; fi
+  _wsp_c=$(cd "$WSP_FIXTURE_ROOT" 2>/dev/null && pwd -P) || { echo "REFUSED: fixture root" >&2; exit 4; }
+  case "$_wsp_c" in /tmp/?*) ;; *) echo "REFUSED: fixture root must canonically be under /tmp" >&2; exit 4;; esac
+  [ "$_wsp_c" = "${WSP_FIXTURE_ROOT%/}" ] || { echo "REFUSED: fixture root has a symlink" >&2; exit 4; }
+  _wsp_fx=1
+fi
+# Inherited suite-internal variables are discarded, including their export
+# attribute (documentation D4-1): unset removes both. Only the validated fixture hook stays.
+for _wsp_v in $(compgen -v WSP_); do case "$_wsp_v" in WSP_FIXTURE_ROOT) ;; *) unset "$_wsp_v";; esac; done
+[ "$_wsp_fx" -eq 1 ] || unset WSP_FIXTURE_ROOT
+_wsp_st() { if [ "$_wsp_os" = Darwin ]; then /usr/bin/stat -f "$1" "$2"; else /usr/bin/stat -c "$3" "$2"; fi; }
+_wsp_noacl() { # deny by default (D3-01): "+" refuses; "@" needs a one-line "ls -lde"
+  _wsp_l=$(/bin/ls -ld "$1" 2>/dev/null) || return 1
+  _wsp_l=${_wsp_l%% *}
+  case "$_wsp_l" in
+    ??????????|??????????.) return 0;;
+    ??????????@) _wsp_n=$(/bin/ls -lde "$1" 2>/dev/null) || return 1
+                 [ "$(printf '%s\n' "$_wsp_n" | /usr/bin/wc -l | /usr/bin/tr -d ' ')" = 1 ];;
+    *) return 1;;
+  esac
+}
+_wsp_trust() { # path: not symlink, no ACL, owner root|workstationadmin (fixture: caller), not group/world writable
+  [ -L "$1" ] && return 1
+  _wsp_noacl "$1" || return 1
+  _wsp_o=$(_wsp_st %Su "$1" %U) || return 1; _wsp_m=$(_wsp_st %Lp "$1" %a) || return 1
+  case "$_wsp_o" in root|workstationadmin) ;; *) [ "$_wsp_fx" -eq 1 ] && [ "$_wsp_o" = "$(/usr/bin/id -un)" ] || return 1;; esac
+  case "$_wsp_m" in *[2367]?|*[2367]) case "$_wsp_m" in 1???) [ -d "$1" ] && [ "$1" != "$_wsp_dir" ] || return 1;; *) return 1;; esac;; esac
+  return 0
+}
+case "$0" in /*) _wsp_self="$0";; *) _wsp_self="$(pwd -P)/$0";; esac
+_wsp_dir=$(cd "${_wsp_self%/*}" 2>/dev/null && pwd -P) || { echo "REFUSED: suite directory" >&2; exit 4; }
+_wsp_a="$_wsp_dir"
+while :; do _wsp_trust "$_wsp_a" || { echo "REFUSED: untrusted suite directory or ancestor" >&2; exit 4; }; [ "$_wsp_a" = / ] && break; _wsp_a=${_wsp_a%/*}; [ -n "$_wsp_a" ] || _wsp_a=/; done
+_wsp_lib="$_wsp_dir/workstationadmin-lib.txt"
+if ! { [ -f "$_wsp_lib" ] && _wsp_trust "$_wsp_lib"; }; then echo "REFUSED: library missing or untrusted" >&2; exit 4; fi
+_wsp_trust "$_wsp_dir/${_wsp_self##*/}" || { echo "REFUSED: entry script untrusted" >&2; exit 4; }
+# Residual risk: a process running as root or workstationadmin can still replace
+# files between this check and use. Those identities are trusted by design.
+# shellcheck source=/dev/null
+. "$_wsp_lib"
+WSP_MODULE="accounts"
+WSP_GATE_NEEDS=root
+count_uid() { # in-shell: lines of "name uid" whose uid field equals $2
+  local _x _w _n=0 _ifs=$IFS; _w=$2; set -f; IFS=$WSP_NL
+  # shellcheck disable=SC2086 # intentional line then field split (globbing off)
+  for _x in $1; do IFS=$_ifs; set -- $_x; [ $# -eq 2 ] && [ "$2" = "$_w" ] && _n=$((_n+1)); IFS=$WSP_NL; done
+  IFS=$_ifs; set +f; printf '%s' "$_n"; }
+sysadminctl_token() { sysadminctl -secureTokenStatus "$1" 2>&1; }
+wsp_parse_mode "$@"
+REG="$WSP_BASE/accounts.list"   # root-owned: shortname|displayname|purpose
+# Additional users are ADMIN (resolved contract). Existing roles are never changed.
+
+verify_account() {
+  n="$1"; wsp_add_redact "$n"
+  ustate=$(wsp_user_state "$n") || ustate=unknown
+  case "$ustate" in
+    yes) ;;
+    no) wsp_status PENDING_CONSENT R04 "create:$(wsp_rid "$n")" "not yet created; use System Settings, Users and Groups"; return;;
+    *) wsp_status UNKNOWN R04 "exists:$(wsp_rid "$n")" "account record existence not determinable" present unknown record; return;; esac
+  WSP_CHECKPOINT_ID=$(wsp_user_guid "$n")
+  wsp_run _h dscl . -read "/Users/$n" NFSHomeDirectory; h_rc=$WSP_RC
+  home=$(wsp_field "$_h" NFSHomeDirectory:) || home=""
+  wsp_run _i dscl . -read "/Users/$n" UniqueID; i_rc=$WSP_RC
+  uid=$(wsp_field "$_i" UniqueID:) || uid=""
+  wsp_run _l dscl . -list /Users UniqueID; l_rc=$WSP_RC
+  case "$uid" in ''|*[!0-9]*) uid="";; esac
+  if [ "$h_rc" -ne 0 ] || [ "$i_rc" -ne 0 ] || [ "$l_rc" -ne 0 ] || [ -z "$uid" ] || [ -z "$home" ]; then
+    wsp_status UNKNOWN R03 "account-$(wsp_rid "$n")" "account record not fully readable" present unknown record; return
+  fi
+  dup=$(count_uid "$_l" "$uid")
+  if [ "$dup" = "1" ]; then wsp_status ALREADY_CORRECT R04 "uid:$(wsp_rid "$n")" "UID unique"; else wsp_status FAILED R04 "uid:$(wsp_rid "$n")" "UID shared by more than one record"; fi
+  ast=$(wsp_admin_state "$n")
+  if [ "$ast" = yes ]; then wsp_status ALREADY_CORRECT R04 "role:$(wsp_rid "$n")" "admin (required)" admin admin record
+  elif [ "$ast" = unknown ]; then wsp_status UNKNOWN R04 "role:$(wsp_rid "$n")" "membership not determinable" admin unknown record
+  else wsp_status BLOCKED_POLICY R04 "role:$(wsp_rid "$n")" "existing account is not admin; role change needs separate decision (D05)"; fi
+  # sysadminctl prints this status on stderr; it is non-secret and kept in memory only.
+  # Through the capture boundary (D6-02); stderr is folded into stdout by the helper.
+  wsp_run tokout sysadminctl_token "$n"; tok_rc=$WSP_RC; tok=""
+  if [ "$tok_rc" -eq 0 ]; then case "$tokout" in *"Secure token is ENABLED"*"Secure token is DISABLED"*|*"Secure token is DISABLED"*"Secure token is ENABLED"*) ;; *"Secure token is ENABLED"*) tok=ENABLED;; *"Secure token is DISABLED"*) tok=DISABLED;; esac; fi   # nonzero rc, capture failure or conflict -> UNKNOWN
+  case "$tok" in ENABLED) wsp_status ALREADY_CORRECT R18 "securetoken:$(wsp_rid "$n")" "secure token enabled (not proof of FileVault unlock)";;
+    DISABLED) wsp_status PENDING_CONSENT R18 "securetoken:$(wsp_rid "$n")" "no secure token; grant through Settings/FileVault guided flow";;
+    *) wsp_status UNKNOWN R18 "securetoken:$(wsp_rid "$n")" "token status output not recognized";; esac
+  if [ -d "$WSP_ROOT$home/Library" ] && [ -d "$WSP_ROOT$home/Desktop" ] && [ ! -L "$WSP_ROOT$home" ]; then
+    o=$(wsp_stat_owner "$WSP_ROOT$home")
+    if [ "$o" = "$n" ] || [ "$WSP_FIXTURE" -eq 1 ]; then wsp_status ALREADY_CORRECT R04 "home:$(wsp_rid "$n")" "home initialized and owned" ; else wsp_status FAILED R04 "home:$(wsp_rid "$n")" "home owner differs from account"; fi
+  else wsp_status PENDING_LOGIN R04 "home:$(wsp_rid "$n")" "home not fully initialized until first login"; fi
+  wsp_status PENDING_LOGIN R04 "picture:$(wsp_rid "$n")" "picture (e.g. Sunflower) is a manual selection"
+  wsp_status PENDING_LOGIN R04 "login-test:$(wsp_rid "$n")" "actual login and FileVault unlock are separate acceptance checks"
+  WSP_CHECKPOINT_ID=""
+}
+
+# Registry trust (D3-08): root-owned (fixture: caller) mode 600 regular file
+# with a trusted, ACL-free ancestry. Untrusted registries are never consumed.
+reg_ok() {
+  wsp_check_file "$REG" || return 1
+  [ "$(wsp_stat_owner "$REG")" = root ] || [ "$WSP_FIXTURE" -eq 1 ] || return 1
+  [ "$(wsp_stat_mode "$REG")" = 600 ]
+}
+reg_base_ok() {
+  if [ ! -d "$WSP_BASE" ]; then mkdir -m 700 "$WSP_BASE" || return 1; fi
+  wsp_trusted_dir "$WSP_BASE" || return 1
+  [ "$(wsp_stat_owner "$WSP_BASE")" = root ] || [ "$WSP_FIXTURE" -eq 1 ]
+}
+register_new() {
+  [ "$EUID" -eq 0 ] || [ "$WSP_FIXTURE" -eq 1 ] || wsp_refuse "registering accounts needs root (launcher uses sudo)"
+  while :; do
+    printf 'Display name (empty to stop): ' > /dev/tty; IFS= read -r dn < /dev/tty || break
+    [ -n "$dn" ] || break
+    case "$dn" in *[!A-Za-z0-9\ ._-]*) echo "rejected: display name characters" > /dev/tty; continue;; esac
+    printf 'Short name: ' > /dev/tty; IFS= read -r sn < /dev/tty || break
+    wsp_valid_shortname "$sn" || { echo "rejected: short name" > /dev/tty; continue; }
+    case "$(wsp_user_state "$sn")" in yes) echo "exists: will verify, not recreate" > /dev/tty;; no) ;; *) echo "note: existence of this account could not be determined" > /dev/tty;; esac
+    if [ -e "$REG" ] && ! reg_ok; then wsp_status FAILED R04 registry "registry untrusted (owner, mode, ACL or ancestry); not used" trusted untrusted record; return; fi
+    if [ -f "$REG" ] && awk -F'|' -v s="$sn" '$1==s{f=1} END{exit !f}' "$REG"; then echo "already registered" > /dev/tty; continue; fi
+    printf 'Account purpose: ' > /dev/tty; IFS= read -r pu < /dev/tty || break
+    case "$pu" in *'|'*) echo "rejected: purpose has |" > /dev/tty; continue;; esac
+    case "$dn" in "Local "[0-9][0-9][0-9]) [ "$sn" = "local${dn#Local }" ] || echo "note: short name differs from proposal local${dn#Local } (exception)" > /dev/tty;;
+      *) echo "note: not 'Local NNN' form; treated as Board/other exception (D04)" > /dev/tty;; esac
+    wsp_confirm "Register $sn ($dn), role ADMIN?" "YES" || continue
+    reg_base_ok || { wsp_status FAILED R04 registry "state directory missing or untrusted" trusted untrusted record; return; }
+    if [ -e "$REG" ] || [ -L "$REG" ]; then reg_ok || { wsp_status FAILED R04 registry "registry untrusted; not appended" trusted untrusted record; return; }
+    else (set -C; umask 077; : > "$REG") || { wsp_status FAILED R04 registry "registry could not be created exclusively" written failed record; return; }; fi
+    if ! (umask 077; printf '%s|%s|%s\n' "$sn" "$dn" "$pu" >> "$REG") || ! reg_ok; then wsp_status FAILED R04 registry "registry write failed or result untrusted" written failed record; return; fi
+    case "$(wsp_user_state "$sn")" in
+      no) ;;
+      yes) continue;;
+      *) echo "note: existence could not be determined; check Users and Groups before creating anything" > /dev/tty; continue;;
+    esac
+    echo "Create this account in System Settings, Users and Groups, as Administrator. Enter the password there from the vault." > /dev/tty
+  done
+}
+
+wsp_status ALREADY_CORRECT R03 operator-not-recreated "workstationadmin is never created by this suite"
+wsp_status PENDING_LOGIN R03 operator-picture "Owl Memoji is a manual cosmetic choice"
+[ "$WSP_MODE" = "apply" ] && register_new
+if [ -e "$REG" ] || [ -L "$REG" ]; then
+  if ! reg_ok; then wsp_status FAILED R04 registry "registry untrusted (owner, mode 600, ACL or ancestry); not consumed" trusted untrusted record
+  else while IFS='|' read -r sn dn pu; do
+    wsp_valid_shortname "$sn" || { wsp_status FAILED R02 registry "invalid line rejected"; continue; }
+    verify_account "$sn"
+  done < "$REG"; fi
+else wsp_status PENDING_CONSENT R04 registry "no accounts registered; run --mode apply --module accounts"; fi
+wsp_finish

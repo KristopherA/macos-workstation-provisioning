@@ -1,0 +1,135 @@
+#!/bin/bash
+# workstationadmin-static-check - boundary/pipeline inventory (D7 premise test).
+# Author/review tooling; reads source text only, executes nothing.
+# Usage: bash workstationadmin-static-check.txt SUITE_DIR [--check-allow]   (exit 0 clean, 1 hits, 3 setup/tool failure)
+# Rules, applied to code AFTER the trusted bootstrap (modules: after the
+# library is sourced; library: from the report-contract section on):
+#  N  native fact tool run directly (not as an argument of wsp_run) -> bypass; also in
+#     condition/brace/negation position (if, while, then, do, else, !, { and ( )
+#  P  command substitution containing a pipeline whose status is not checked
+#     (no ||, if or ! on that line; && does NOT count as a check)                                -> unchecked
+#  Q  pipeline/command substitution used directly inside a decision ([ ] or case)
+#  M  multi-line command substitution whose closing line is not followed by ||
+#     (a closing ') ||' or '||' leading the next line is reported as CHECKED)
+#  P is satisfied only by '|| ...' right after the substitution, or if/! on it.
+# Every hit must be fixed or listed in ALLOW below with a category.
+set -u
+D="${1:?suite dir}"
+# ALLOW: one exception per line, "file~rule~text~category" ("~" separates; text may contain "|").
+# "file" is "lib" or the file name; "text" must occur in the offending source line, so an entry
+# cannot excuse a different line in the same function. With --check-allow an entry that matched
+# nothing is itself a hit (stale).
+allow_table() { cat <<'ALLOWTBL'
+workstationadmin-provision.txt~R~printf '%s\n' "$WSP_RID_SALT" | $runner~per-run salt piped to the child module on stdin (no captured fact)
+lib~R~_r=$(od -An -N4~random run-id label (not evidence)
+lib~P~_r=$(od -An -N4~random run-id label (not evidence)
+lib~R~WSP_RID_SALT=$( set -o pipefail; od~salt generation, status checked (32 hex or REFUSED)
+lib~R~shasum -a 256 2>/dev/null | cut -c1-10~pseudonym hash label (not evidence)
+lib~P~shasum -a 256 2>/dev/null | cut -c1-10~pseudonym hash label (not evidence)
+lib~R~"$@" | head -c~capture pipeline; its statuses are validated by the WSPRC/WSPWC records
+lib~R~__wsp_meta=$( set -o pipefail; printf~capture validator awk, status checked (|| wsp_run_fail)
+lib~R~wsp_script_hash() {~provenance hash (report label only)
+lib~R~( cd "$_wsp_dir" && shasum~provenance hash (report label only)
+lib~R~shasum -a 256 "$WSP_POLICY"~provenance hash (report label only)
+lib~R~_n=$(printf '%s\n' "$_l" | wc -l~filesystem trust (ACL listing; documented bootstrap-class boundary)
+lib~P~_n=$(printf '%s\n' "$_l" | wc -l~filesystem trust (ACL listing; documented bootstrap-class boundary)
+lib~N~stat -f~filesystem trust (documented bootstrap-class boundary)
+lib~N~ioreg -rd1~unused legacy checkpoint helper (no caller)
+lib~R~ioreg -rd1~unused legacy checkpoint helper (no caller)
+lib~R~_op=$(printf '%s' "$2" | tr -c~checkpoint file-name sanitising (not evidence)
+lib~P~_op=$(printf '%s' "$2" | tr -c~checkpoint file-name sanitising (not evidence)
+workstationadmin-mod-accounts.txt~N~sysadminctl_token() {~named stderr-folding helper, invoked only through wsp_run
+UserSpace-audit.txt~R~sed -n '2,22p' "$0"~help text of this file (read-only)
+lib~R~/usr/bin/sed -n '2,/^# ---- trusted bootstrap/p' "$_wsp_self"~help text of the entry script itself (read-only)
+ALLOWTBL
+}
+ALLOW=$(allow_table) || { echo "STATIC-SETUP allow table unreadable"; exit 3; }
+inv() { # file -> TSV hits
+  awk -v F="$1" -v SHORT="$2" '
+    # mask(): quote-aware scan. Single-quoted text and double-quoted LITERAL
+    # text become x; command substitutions (also inside double quotes) stay.
+    function mask(l,   i,c,o,st,dep,n) { o=""; st="n"; dep=0; n=length(l)
+      for (i=1;i<=n;i++) { c=substr(l,i,1)
+        if (st=="s") { if (c=="\047") { st=stk[dep]; o=o c } else o=o "x"; continue }
+        if (c=="\\") { o=o c substr(l,i+1,1); i++; continue }
+        if (st=="d" && c=="\"") { st="n"; o=o c; continue }
+        if (c=="$" && substr(l,i+1,1)=="(") { dep++; pd[dep]=st; st="n"; o=o "$("; i++; continue }
+        if (st=="n" && c==")" && dep>0) { st=pd[dep]; dep--; o=o c; continue }
+        if (st=="n" && c=="\047") { stk[dep]=st; st="s"; o=o c; continue }
+        if (st=="n" && c=="\"") { st="d"; o=o c; continue }
+        if (st=="d") { o=o "x"; continue }
+        o=o c }
+      return o }
+    # Multi-line substitution: its hits are held until the closing line. It is
+    # checked only if the raw text closes with ") ||" on that line or "||" leads
+    # the next line; otherwise M (and any P) are reported.
+    function flush(chk) { if (!chk) { printf "%s", held; } else printf "C\t%s\t%d\t%s\tchecked multi-line substitution\n", SHORT, hl, hfn; held=""; pend=0 }
+    BEGIN { on=0; fn="main"; pend=0; held="" }
+    SHORT=="lib" && /^# --- report contract/ { on=1 }
+    SHORT!="lib" && /^\. "\$_wsp_lib"/ { on=1; next }
+    { line=$0 }
+    /^[ \t]*#/ { next }
+    match(line, /^[A-Za-z_][A-Za-z0-9_]*\(\)/) { fn=substr(line,1,RLENGTH-2) }
+    !on { if (line ~ /^}/) fn="main"; next }
+    pend==2 { flush(line ~ /^[ \t]*\|\|/) }
+    pend==1 && NR>hl {
+      if (line ~ /^[ \t]*\x27?[ \t]*\)[ \t]*\|\|/ || line ~ /\)[ \t]*\|\|[ \t]*\{[ \t]*wsp_run_fail/) { flush(1); next }
+      else if (line ~ /^[ \t]*\x27?[ \t]*\)[ \t]*$/ || line ~ /\)[ \t]*\\[ \t]*$/) { pend=2; next }
+      else if (NR-hl>80) { flush(0) } }
+    {
+      t=mask(line)
+      gsub(/wsp_run [A-Za-z_][A-Za-z0-9_]* [^;&|)]*/, "WSPRUN", t)
+      if (t ~ /(\$\(|\| *|; *|^ *|\[ *|[&][&] *|\|\| *|\{ +|\( *|! +|(^|[ \t;])(if|elif|while|until|then|do|else) +!? *)(id|stat|scutil|dscl|defaults|sw_vers|uname|fdesetup|csrutil|profiles|dsmemberutil|sysadminctl|socketfilterfw|pmset|spctl|systemsetup|diskutil|ioreg|plutil|codesign|lipo|dseditgroup|launchctl|softwareupdate)( |\)|$)/ && t !~ /\/usr\/bin\/uname -s/)
+        printf "N\t%s\t%d\t%s\t%s\n", SHORT, NR, fn, substr(line,1,140)
+      ck=(t ~ /\)"?[ \t]*\|\|/ || t ~ /^[ \t]*(if|elif|while|until)[ \t]+!?[ \t]*[A-Za-z_][A-Za-z0-9_]*=\$\(/ || t ~ /(^|[ \t;])![ \t]+[A-Za-z_][A-Za-z0-9_]*=\$\(/)
+      no=gsub(/\$\(/, "&", t); nc=gsub(/\)/, "&", t)
+      if (no>nc) { pend=1; hl=NR; hfn=fn; held=sprintf("M\t%s\t%d\t%s\t%s\n", SHORT, NR, fn, substr(line,1,140)) }
+      if (t ~ /\$\([^)]*[^|]\|[^|]/ && !ck) {
+        x=sprintf("P\t%s\t%d\t%s\t%s\n", SHORT, NR, fn, substr(line,1,140)); if (pend && hl==NR) held=held x; else printf "%s", x }
+      if (t ~ /(\[ +"?\$\(|case +"?\$\()[^)]*[^|]\|[^|]/)
+        printf "Q\t%s\t%d\t%s\t%s\n", SHORT, NR, fn, substr(line,1,140)
+      # Rule R (d10: path, command/env/VAR= prefixes, more interpreters, <<< and <( input, pipe at EOL)
+      if (t ~ /(^|[^|])\| *((\/[A-Za-z0-9_.\/-]*\/)?(command|env|exec|nice|nohup|time|sudo)( +-[A-Za-z-]+)* +)*([A-Za-z_][A-Za-z0-9_]*=[^ ]* +)*(\/[A-Za-z0-9_.\/-]*\/)?(grep|egrep|fgrep|awk|gawk|mawk|nawk|sed|tr|cut|wc|sort|uniq|paste|head|tail|cat|tee|xargs|od|shasum|perl[0-9.]*|python[0-9.]*|ruby[0-9.]*|node|php|jq|plutil|bc|base64|rev|column|nl|fold|expand|xxd|hexdump|dd|strings|iconv|basename|dirname|sh|bash|zsh|osascript)( |$|[;)&])/ \
+          || t ~ /<<<|<\(|>\(/ || t ~ /[^|]\| *$/ || t ~ /(^|[^|])\| *\$[A-Za-z_{(]/ || line ~ /[^|] \| +"\$[A-Za-z_][A-Za-z0-9_]*"( |$)/)
+        printf "R\t%s\t%d\t%s\t%s\n", SHORT, NR, fn, substr(line,1,140)
+    }
+    /^}/ { fn="main" }
+    END { if (pend) flush(0) }' "$1"
+}
+CHECK_ALLOW=0; [ "${2:-}" = "--check-allow" ] && CHECK_ALLOW=1
+TMP=$(mktemp -d "${TMPDIR:-/tmp}/wsp-sc.XXXXXX") || { echo "STATIC-SETUP no temp dir"; exit 3; }
+trap 'rm -rf "$TMP"' EXIT
+: > "$TMP/used"
+TAB=$(printf '\t')
+hits=0; allowed=0; nfiles=0; nlines=0
+for f in "$D"/workstationadmin-*.txt "$D"/UserSpace-*.txt; do
+  [ -f "$f" ] || continue
+  b=$(basename "$f")
+  case "$b" in *test-harness*|*static-check*|*scrub-check*) continue;; esac
+  s=$b; [ "$b" = workstationadmin-lib.txt ] && s=lib
+  inv "$f" "$s" > "$TMP/inv" || { echo "STATIC-SETUP scanner failed on $b"; exit 3; }
+  nfiles=$((nfiles+1)); n=$(wc -l < "$f") || { echo "STATIC-SETUP wc failed"; exit 3; }; nlines=$((nlines+n))
+  while IFS="$TAB" read -r r sh ln fn tx; do
+    if [ "$r" = C ]; then printf 'CHECKED %s:%s %s [%s]\n' "$b" "$ln" "$fn" "$tx"; continue; fi
+    cat=""; i=0
+    while IFS='~' read -r af ar asub acat; do
+      [ -n "$af" ] || continue; i=$((i+1))
+      if [ "$af" = "$sh" ] && [ "$ar" = "$r" ]; then case "$tx" in *"$asub"*) cat=$acat; echo "$i" >> "$TMP/used"; break;; esac; fi
+    done <<HEREEOF
+$ALLOW
+HEREEOF
+    if [ -n "$cat" ]; then allowed=$((allowed+1)); printf 'ALLOW %s %s:%s %s [%s]\n' "$r" "$b" "$ln" "$fn" "$cat"
+    else hits=$((hits+1)); printf 'HIT   %s %s:%s %s | %s\n' "$r" "$b" "$ln" "$fn" "$tx"; fi
+  done < "$TMP/inv"
+done
+if [ "$nfiles" -lt 1 ] || [ "$nlines" -lt 1 ]; then echo "STATIC-SETUP no suite files scanned in $D"; exit 3; fi
+if [ "$CHECK_ALLOW" -eq 1 ]; then
+  i=0; while IFS='~' read -r af ar asub acat; do
+    [ -n "$af" ] || continue; i=$((i+1))
+    grep -qx "$i" "$TMP/used" || { hits=$((hits+1)); printf 'HIT   STALE allow entry #%s (%s|%s) matched no source line\n' "$i" "$af" "$ar"; }
+  done <<HEREEOF
+$ALLOW
+HEREEOF
+fi
+echo "STATIC-CHECK hits=$hits allowed=$allowed files=$nfiles lines=$nlines"
+[ "$hits" -eq 0 ]

@@ -1,0 +1,675 @@
+Inspect and test the d18 draft5 suite
+Locked to d18 draft5. PARTIAL, not Mac-validated.
+This procedure is text only. No operator command was executed for these documents.
+No real Mac action is authorized by the documentation or a controlled-pilot label.
+
+1. Check readiness before a future disposable-Mac test
+1. Obtain explicit authorization for the test Mac and selected operations.
+2. Use another disposable representative Mac, not a production workstation.
+3. Select the actual supported build, hardware, architecture, and enrollment route.
+4. Confirm the key-file decision and resolve decisions needed by selected apply operations.
+5. Verify a backup and an operation-specific recovery plan.
+6. Preserve workstationadmin as the operator and a working unlock account.
+7. Keep system, account, and offline work in its real GUI console session.
+8. Do not run the whole launcher as root or through sudo.
+9. Keep the code snapshot and policy revision constant within each comparison run.
+10. Record the D18 archive SHA256, suite_id, entry/library hashes, and policy revision locally.
+11. Keep baseline, plan, apply, verify, and post-audit files separate and versioned.
+
+Use only this archive for D18 draft5 reference:
+macos-provisioning-suite-code-snapshot-d18.tar
+SHA256 ae0ccc3fd55331372bcb219bb602fd37a697904d42ecbf5f99d513796bc57241
+Do not mix an evolving working copy with these instructions.
+No session-policy or package installer is supplied. The firstlogin module, when apply is authorized, installs the five module-3 targets, including the LaunchAgent plist and the consent record. It does not load the agent and does not write into a user home.
+Do not create a deployment recipe from obsolete interface prose.
+Do not use Docker contexts port or starboard. This workflow does not need Docker.
+
+Target audit baseline gate
+The D15 session reader includes TARGET_OS_MAJOR. Ordinary audit needs that approved
+numeric baseline in trusted root-owned readable session policy.
+No session-policy installer is supplied. Arrange session.conf and user-prefs.conf only
+through a separately reviewed and authorized setup. No session-policy command is invented here.
+A missing or different baseline refuses. An explicitly authorized --allow-untested-os
+observation is unvalidated and cannot turn the baseline into a compatibility pass.
+If code or policy changes, start a new versioned comparison run.
+
+2. Collect operator inspection and target baseline evidence
+1. Arrange an existing protected report directory owned by the caller.
+   Prefer mode 0700. Code enforces ownership and safe write bits, not an exact private-parent mode.
+2. Set SUITE locally to the trusted approved suite directory.
+3. Set REPORT_DIR locally to that caller-owned directory.
+4. Use a new output filename for each run.
+5. Run the following operator inspect command only after separate authorization.
+
+/bin/bash "$SUITE/workstationadmin-provision.txt" --mode inspect --output "$REPORT_DIR/operator-plan-d15-01.txt"
+
+Inspect is the default. The explicit mode makes the intent visible.
+Without --module, inspection includes all modules. It is not all-module apply.
+Preflight and other privileged reads use sudo. The operator launcher stays nonroot.
+Reports can be written. No apply branch is taken.
+Record the generated run ID from WSPREC fields. Do not invent a run ID flag.
+
+6. Arrange the final target user's actual GUI console session for the baseline audit.
+7. Keep that user nonroot. Do not substitute sudo or a UID switch for login.
+8. Treat a target account as missing only when dscl exits 56 with empty output and a not-found error class.
+   Map that confirmed absence to PENDING_CONSENT for guided creation in the accounts module.
+   If existence cannot be determined, record UNKNOWN. UNKNOWN is incomplete, not a pass.
+   A missing required operator record in preflight or audit is FAILED, not PENDING_CONSENT.
+   Record an unavailable target session as pending.
+9. Use the suite audit with its adjacent trusted library, not the original worker audit.
+
+The following is the statically valid ordinary audit form.
+Use the approved trusted session baseline. Treat any refusal as incomplete evidence.
+
+/bin/bash "$SUITE/UserSpace-audit.txt" --output "$REPORT_DIR/target-baseline-d15-01.txt"
+
+The audit does not change preferences, install software, or remediate failures.
+Do not grant extra privacy permissions just to make an audit pass.
+UserSpace-firstlogin.txt is removed from this archive. It is not the first-login agent.
+Do not launch it as an automatic provisioning or deployment step.
+Do not assume an old LaunchAgent invokes this suite. Only the firstlogin installer writes the d14 plist, and only after an authorized apply.
+
+3. Apply only an explicitly authorized selected test operation
+1. Review current inspection results and required baseline limitations.
+2. Resolve affected decisions, consent, backup, and platform gates before apply.
+3. Do not treat a missing decision as permission to invent a value.
+4. Obtain explicit approval for the selected test operation despite any unresolved unrelated checks.
+5. Return to workstationadmin's real GUI console session.
+6. Do not invoke internal modules directly to bypass launcher confirmation.
+
+This text example selects firewall only. It is not authorization to enable the firewall.
+After typed APPLY, the launcher runs mandatory privileged preflight in inspect mode.
+Typed APPLY is the only interactive confirmation. It is the launcher prompt, not the apply gate.
+The apply gate is a prerequisite and policy check. It is not a consent prompt.
+Any nonzero preflight result refuses all selected modules with exit 4.
+Every root write boundary also checks supported OS/build, admin operator, SIP, and readable MDM state.
+
+/bin/bash "$SUITE/workstationadmin-provision.txt" --mode apply --module firewall --output "$REPORT_DIR/firewall-apply-d15-01.txt"
+
+7. Record the apply run ID and every result, not only the process exit.
+8. Stop a failed mutation. Investigate current state before retry.
+
+Other module names are preflight, accounts, names, ssh, ard, filevault, updates,
+userprefs, power, shared, apps, admin-session, firstlogin, and gates.
+Admin-session cannot apply its former writes.
+It reports apply-disabled when reached in apply mode and inspects only.
+The admin-session Dock and Finder settings are out of scope by design. That is the owner's decision of 19 November 2026, relayed by the coordinator. They are not unfinished work.
+The updates writer, the offline userprefs writer, the firstlogin installer, the shared-copy writer, the apps install writer, and the FileVault key writer are restored as described in the plan.
+The logged-in user-preferences path is UserSpace-preferences.txt, run by the target user, not as a launcher module.
+The first-login agent is the installed copy of that same script with --mode apply --firstlogin.
+APP_LIST in policy.conf and session.conf lists Label/BundleName[/store] entries joined by ":".
+Exact example: ExampleChat/ExampleChat:Example Sheets/Example Sheets/store.
+Reject empty parts including a trailing ":", an empty third field, a Label with leading or trailing spaces, and a BundleName that starts with "." or has leading or trailing spaces.
+Unset or malformed APP_LIST reports BLOCKED_POLICY for the apps module and audit app-list check.
+WSP_OPERATOR defaults to workstationadmin.
+QA helpers workstationadmin-static-check.txt and workstationadmin-scrub-check.txt execute nothing they scan.
+Release scrub procedure:
+1. Export a clean copy of the suite. Do not scan a working repository.
+2. Keep the private site-pattern file outside the export.
+3. Run bash workstationadmin-scrub-check.txt EXPORT_DIR --site-file FILE --strict-docs --expect-exempt N
+4. Do not use --generic-only for release.
+For this frozen archive, N is 3. N is the exemption-token count in the scrub-check file itself. A different count is a hit. The exemption is matched on the relative path. A same-named file in a subdirectory is a hit. Do not write the exemption token in these docs.
+The check scans dotfiles and subdirectories. Symlinks, special files, and .git entries are hits.
+Do not name or quote the private site patterns in these docs.
+The FileVault module, when configured as described in section 7, can enable FileVault and write the NEW key file. It never prints the key. No command in this suite builds Docks. The apps writer installs only from a local signed .pkg or .dmg after the gates in the plan. The updates writer and the two module-2 entry points change stored preferences only. The updates writer never installs updates and never restarts. The firstlogin installer deploys the LaunchAgent and the consent record only, and only after an authorized apply. The shared module copies operator-listed items into /Users/Shared only after SHARED_COPY_CONSENT=yes and an authorized apply.
+Accounts apply registers requested identities and guides Settings creation, without creating accounts itself.
+Names apply requires the approved templates and tag. It previews exact names and asks for NAMES.
+Do not assume the tag resolves remaining naming-token, model, or network naming decisions.
+HostName remains unchanged and reports UNSUPPORTED. Use supported manual handling only if separately required.
+Legacy explicit name keys do not control naming. Do not fill them as a workaround.
+
+
+How to apply software-update preferences on a disposable Mac
+Inspect is the default. Do not skip the baseline.
+The required values are fixed by the 9 November 2026 reviewer-worksheet decision. They are not operator choices.
+1. Obtain explicit authorization for the disposable test Mac.
+2. Put these required keys in trusted policy.conf. Do not leave any key unset.
+   UPDATES_AUTO_CHECK=on
+   UPDATES_AUTO_DOWNLOAD=on
+   UPDATES_CONFIG_DATA=on
+   UPDATES_CRITICAL=on
+   UPDATES_MACOS_INSTALL=off
+   UPDATES_APP_STORE=on
+3. Run the operator inspect command first and record the baseline report.
+4. Review PROPOSED, BLOCKED_POLICY, UNKNOWN, and management-overrides records. Do not treat PENDING_LOGIN or PENDING_CONSENT as a pass.
+5. If management state is BLOCKED_POLICY or UNKNOWN, stop. Do not override a managed payload or an MDM enrollment.
+6. Return to the workstationadmin GUI console session.
+7. Run the launcher with --mode apply --module updates and a new output file only after the launcher APPLY prompt.
+   That prompt is the only interactive confirmation. The apply gate is not a consent prompt.
+8. After apply, record CHANGED_VERIFIED or FAILED from the typed read-back. Record the backup directory named in the written-key detail.
+9. Confirm that no update was installed and that the Mac did not restart.
+10. Run --mode verify --module updates with a new output file under the same policy.
+11. Run the target post-audit on the same disposable Mac with the same session policy.
+12. Confirm the toggles in System Settings, General, Software Update.
+13. Keep update-install and rollback-manual pending. Complete App Store authorization (P09) only through the approved manual path.
+
+This text example selects updates only. It is not authorization to change update preferences.
+
+/bin/bash "$SUITE/workstationadmin-provision.txt" --mode inspect --module updates --output "$REPORT_DIR/updates-inspect-d15-01.txt"
+
+/bin/bash "$SUITE/workstationadmin-provision.txt" --mode apply --module updates --output "$REPORT_DIR/updates-apply-d15-01.txt"
+
+/bin/bash "$SUITE/workstationadmin-provision.txt" --mode verify --module updates --output "$REPORT_DIR/updates-verify-d15-01.txt"
+
+
+How to restore a software-update preference file by hand
+Run these commands as root. Replace BACKUP_DIR with the backup directory from the written-key record's backup= field, not only the last path component in the detail.
+On a root apply, backup= is the full absolute directory under /Library/Management/WorkstationProvisioning/backup/.
+The directory mode is 0700. Use the directory from the same run. Do not restore automatically and do not restart a daemon.
+
+To restore com.apple.SoftwareUpdate.plist from a copied backup:
+
+cp -p BACKUP_DIR/com.apple.SoftwareUpdate.plist /Library/Preferences/com.apple.SoftwareUpdate.plist
+
+To restore com.apple.commerce.plist from a copied backup:
+
+cp -p BACKUP_DIR/com.apple.commerce.plist /Library/Preferences/com.apple.commerce.plist
+
+If the backup directory holds com.apple.SoftwareUpdate.plist.ABSENT, remove the live plist instead of copying:
+
+rm /Library/Preferences/com.apple.SoftwareUpdate.plist
+
+If the backup directory holds com.apple.commerce.plist.ABSENT, remove the live plist instead of copying:
+
+rm /Library/Preferences/com.apple.commerce.plist
+
+Keep rollback-manual PENDING_CONSENT until this restore is done and reviewed.
+
+
+How to apply user preferences on a disposable Mac, logged-in path
+Use UserSpace-preferences.txt. Run it as the target user in that user's own GUI console session.
+Do not run it as root, through sudo, or as workstationadmin. The script refuses those callers and a caller who is not the console user.
+The user must be listed in session policy USERS. HOME must equal the dscl NFSHomeDirectory record.
+A home folder path that contains a space is not handled by module 2. This path refuses with exit 4.
+Inspect is the default. Apply needs --mode apply, USER_PREFS_CONSENT=yes in the trusted session policy, and the typed word APPLY on a terminal.
+"Terminal" means stdin: the stock tty tool must exit 0 and print a /dev/ name, and the word is read from stdin. The prompt is written to file descriptor 5, a copy of the caller's real stderr taken before file descriptor 2 is sent to /dev/null.
+UserSpace-preferences.txt does not accept --output. Report records go to stdout. Redirect stdout only. Leave the terminal stderr in place so the prompt stays visible.
+Piped or redirected stdin is a refusal. No terminal, an empty answer, or any other text reports PENDING_CONSENT apply-gate, continues as inspect, writes nothing, and ends with exit 2 if nothing else fails.
+A missing or non-yes consent key, or an unreadable MDM enrollment state, reports BLOCKED_POLICY apply-gate and does not ask APPLY.
+Use the baseline, apply, and post-audit loop on a disposable Mac. Do not skip the baseline.
+
+1. Obtain explicit authorization for the disposable test Mac and the selected preference entries.
+2. Place user-prefs.conf in the trusted session-policy directory, beside session.conf. The file must be root-owned and trust-checked. There are no defaults.
+   Use the grammar id|domain|key|type|value. One syntax error, a missing or empty file, a repeated id, or a repeated (domain,key) pair rejects the whole file. Nothing is applied.
+   Integers must be canonical: 0 or an optional minus and 1-9 digits with no leading zeros, no -0, and no plus.
+   Limit the file to 64 entries. Use only keys that appear in the library domain-to-key table. Configuration can only narrow that table.
+   Use hyphens in long ids. A run of 24 or more letters or digits in a non-path report field is shown as [opaque-token].
+3. Set USER_PREFS_CONSENT=yes in trusted session.conf. Any other value, or an unset key, refuses apply and runs inspect only, without asking APPLY.
+4. Arrange the target user's real GUI console session with a real terminal on stdin. Keep that user nonroot.
+5. Run the target baseline audit first, then inspect preferences, each with a new output file.
+   The audit accepts --output. UserSpace-preferences.txt does not. Redirect its stdout only.
+
+/bin/bash "$SUITE/UserSpace-audit.txt" --output "$REPORT_DIR/target-baseline-prefs-d15-01.txt"
+
+/bin/bash "$SUITE/UserSpace-preferences.txt" --mode inspect > "$REPORT_DIR/userspace-prefs-inspect-d15-01.txt"
+
+6. Review PROPOSED, BLOCKED_POLICY, UNKNOWN, and preferences-config records. Do not treat PENDING_LOGIN as a pass.
+7. If management state is BLOCKED_POLICY or UNKNOWN, stop. Do not override a managed payload or an unreadable enrollment.
+8. After separate authorization, run apply as the same user. Redirect stdout only to a new file. Type APPLY at the prompt when it appears.
+
+/bin/bash "$SUITE/UserSpace-preferences.txt" --mode apply > "$REPORT_DIR/userspace-prefs-apply-d15-01.txt"
+
+9. Record CHANGED_VERIFIED or FAILED from the typed read-back. Record the backup= field on each written-key record.
+   On this path backup= is ~/Library/Application Support/WorkstationProvisioning/backup/<dir>. The account name never appears. When restoring, expand "~" as that user's home. Do not prepend a home folder to a root-style /Library/... value.
+10. Run verify with a new output file under the same policy and the same user session.
+
+/bin/bash "$SUITE/UserSpace-preferences.txt" --mode verify > "$REPORT_DIR/userspace-prefs-verify-d15-01.txt"
+
+11. Run the target post-audit on the same disposable Mac with the same session policy and a new output file.
+12. Confirm the visible behaviour in System Settings. Keep the closing PENDING_LOGIN record pending until that confirmation.
+This text example is not authorization to change user preferences.
+
+
+How to apply user preferences on a disposable Mac, offline path
+Use the launcher module userprefs. Use it only for a home that is not logged in and has no process owned by that user's UID.
+If the user is the console user or appears in who, this path is refused. Use UserSpace-preferences.txt in that user's own session instead.
+If a process owned by the target UniqueID is running, this path is refused until that user has no process.
+Login state is read for each user before the plist checks, and is read once more right before that user's first write, after the checked backup and the identity re-check. Later entries of the same user are not re-read.
+Pilot precondition: turn Remote Login and Screen Sharing off for the target accounts, so no remote session of a target user can exist that who and the console user would miss.
+Targets are the session policy USERS. Never target workstationadmin. UniqueID must be 500 or greater.
+A home folder path that contains a space is not handled by module 2. This path reports UNKNOWN for that user.
+Inspect is the default. Apply needs the launcher APPLY prompt and USER_PREFS_CONSENT=yes. This module has no second APPLY prompt.
+The launcher prompt is still read from /dev/tty. Do not invoke the module directly to bypass launcher confirmation.
+The offline path does not create Library/Preferences. A never-logged-in home that lacks that directory is refused.
+
+1. Obtain explicit authorization for the disposable test Mac and the selected preference entries.
+2. Place the same trusted user-prefs.conf and set USER_PREFS_CONSENT=yes, as in the logged-in path.
+3. Confirm the target account exists, has UniqueID 500 or greater, is not logged in, has no process of that UID, has the home directory record /Users/<user>, and has a home, Library, and Library/Preferences that are owned by that user, not group/other writable, and have no ACL. Existing preference files must be regular, non-symlink files owned by the target user.
+4. Return to the workstationadmin GUI console session.
+5. Run the operator inspect command first and record the baseline report.
+
+/bin/bash "$SUITE/workstationadmin-provision.txt" --mode inspect --module userprefs --output "$REPORT_DIR/userprefs-inspect-d15-01.txt"
+
+6. Review PROPOSED, BLOCKED_POLICY, UNKNOWN, and preferences-config records. Do not treat PENDING_LOGIN as a pass.
+7. If a target is logged in, or management state is BLOCKED_POLICY or UNKNOWN, stop.
+8. Run the launcher with --mode apply --module userprefs and a new output file only after the launcher APPLY prompt.
+
+/bin/bash "$SUITE/workstationadmin-provision.txt" --mode apply --module userprefs --output "$REPORT_DIR/userprefs-apply-d15-01.txt"
+
+9. Record CHANGED_VERIFIED or FAILED from the typed read-back and from the on-disk plutil check. That on-disk check is retried at most three times, one second apart, as the target user.
+   Record the backup= field. On this path that field is the full absolute backup directory in the root-owned backup area. A user name inside the path is redacted as usual.
+   Confirm OWNER.txt sits beside the backup copy (OWNER <user> MODE <mode|absent> FILE <name>, mode 0600).
+10. Confirm that writes were issued as the target user through sudo -n -u USER defaults write on a path domain.
+11. Run verify with a new output file under the same policy.
+
+/bin/bash "$SUITE/workstationadmin-provision.txt" --mode verify --module userprefs --output "$REPORT_DIR/userprefs-verify-d15-01.txt"
+
+12. Run the target post-audit after that user next logs in, with the same session policy.
+13. Confirm the visible behaviour in System Settings at that login. Keep the closing PENDING_LOGIN record pending until that confirmation.
+This text example is not authorization to change user preferences.
+
+
+How to restore a user-preference file by hand
+Use the backup directory from the written-key record's backup= field, not only the last path component in the detail.
+The directory mode is 0700. Use the directory from the same run. Do not restore automatically and do not restart a daemon.
+
+For an offline userprefs or updates backup, backup= is already the full absolute directory. Run the copy as root.
+An offline userprefs backup also holds OWNER.txt (OWNER <user> MODE <mode|absent> FILE <name>, mode 0600). Use that marker to confirm the owner and original mode. A restore with cp -p keeps the owner only if that tool behaviour is confirmed on a Mac (item 14).
+
+For a UserSpace-preferences backup on the ordinary own-session path, backup= is ~/Library/Application Support/WorkstationProvisioning/backup/<dir>. Expand "~" as that user's home folder. Restore as that user. Do not treat the reported path as a root-level /Library location, and do not prepend a home folder to a different form.
+For a first-login-mode backup, including the Terminal hand-run of --firstlogin, the reused folder is ~/Library/Application Support/WorkstationProvisioning/backup/firstlogin-original. Restore from that folder. Do not overwrite those originals.
+
+To restore a copied backup plist, copy it back over the live plist. Example for a dock domain plist after the real backup directory is resolved:
+
+cp -p BACKUP_DIR/com.apple.dock.plist LIVE_PREFS_DIR/com.apple.dock.plist
+
+If the backup directory holds a <name>.ABSENT marker, remove the live plist instead of copying.
+
+
+How to install the first-login LaunchAgent on a disposable Mac
+Use the launcher module firstlogin. Run it as workstationadmin in that account's own GUI console session, through the launcher, not as a direct root invocation.
+The installer writes five targets and nothing in any user home. It runs no launchctl command. It does not open a Terminal. The agent runs later, at a listed user's first GUI login.
+Inspect is the default. Apply needs the launcher APPLY prompt, the root apply gate, FIRSTLOGIN_CONSENT=yes in trusted policy.conf, USER_PREFS_CONSENT=yes and USERS in trusted session.conf, and a valid user-prefs.conf.
+Set FIRSTLOGIN_LABEL only if you need a label other than com.example.workstationprovisioning.firstlogin. The value must be a generic reverse-DNS label as described in the plan. If the line is present and the value is rejected or invalid, the module reports BLOCKED_POLICY fl-label and writes nothing. Only an absent line uses the default.
+
+1. Obtain explicit authorization for the disposable test Mac and for first-login installation.
+2. Place the same trusted user-prefs.conf used by module 2, and set USER_PREFS_CONSENT=yes and USERS in session.conf.
+3. Set FIRSTLOGIN_CONSENT=yes in trusted policy.conf.
+4. Turn Remote Login and Screen Sharing off for the target accounts.
+5. Return to the workstationadmin GUI console session.
+6. Run the operator inspect command first and record the baseline report.
+
+/bin/bash "$SUITE/workstationadmin-provision.txt" --mode inspect --module firstlogin --output "$REPORT_DIR/firstlogin-inspect-d15-01.txt"
+
+7. Review PROPOSED, BLOCKED_POLICY, ALREADY_CORRECT, fl-label, and fl-consent-stale records. Do not treat PENDING_LOGIN or PENDING_CONSENT as a pass.
+8. If a target is bad (symlink, non-regular object, ACL, or not owned by root), stop. The whole install is refused.
+9. Run the launcher with --mode apply --module firstlogin and a new output file only after the launcher APPLY prompt.
+
+/bin/bash "$SUITE/workstationadmin-provision.txt" --mode apply --module firstlogin --output "$REPORT_DIR/firstlogin-apply-d15-01.txt"
+
+10. Record CHANGED_VERIFIED, ALREADY_CORRECT, or FAILED for fl-bin, fl-lib, fl-script, fl-plist, and fl-consent, in that order. If a step failed, later steps are FAILED "not attempted" and the consent record was not written. Do not blindly retry. Inspect current state, repair from the backup if needed, and obtain a new authorization.
+11. Confirm fl-plist-lint is ALREADY_CORRECT, with plutil -lint text equal to the plist path, a colon, a space, and OK.
+12. Confirm the installer did not run launchctl and did not write into any user home.
+13. Run verify with a new output file under the same policy.
+
+/bin/bash "$SUITE/workstationadmin-provision.txt" --mode verify --module firstlogin --output "$REPORT_DIR/firstlogin-verify-d15-01.txt"
+
+14. Keep the closing PENDING_LOGIN first-login-run record pending. The evidence is the user's own first GUI login, described next.
+This text example is not authorization to install the LaunchAgent.
+
+
+What happens at a listed user's first GUI login
+The installed LaunchAgent starts /bin/bash /Library/Management/WorkstationProvisioning-Session/bin/UserSpace-preferences.txt --mode apply --firstlogin as that user. A copy from another folder is refused (exit 4).
+If ~/Library/Application Support/WorkstationProvisioning/firstlogin.done already exists as a regular file owned by that user, the process exits 0 with no output and no write. Remove that file only when a new authorized run is required.
+If the marker is a symlink, another kind of object, or owned by another account, the process refuses (exit 4). A bad marker is never treated as absent.
+The first-login apply needs a valid consent record and its own typed word APPLY on a terminal, asked after the list is loaded. That prompt is not the launcher APPLY prompt.
+At login there is no terminal. The agent reports PENDING_CONSENT firstlogin-typed-APPLY, writes nothing, takes no backup, writes no marker, and ends with exit 2 if nothing else fails. There is no automatic apply.
+The notification shows for each first-login run that stops at PENDING_CONSENT. A run without --firstlogin does not show a notification.
+These are product UI strings, not STE text. The title is exactly:
+Workstation setup
+The text is exactly:
+Workstation setup is waiting for approval. Nothing was changed.
+The text is fixed. It contains no asset tag, user name, key, or policy data. A failed notification changes nothing else. The PENDING_CONSENT record stays, and its detail ends with notify=shown (none) or notify=failed (not-found|other|timeout).
+After that login, the user, or the operator as that user, opens Terminal and runs the installed copy, then types APPLY:
+
+/bin/bash /Library/Management/WorkstationProvisioning-Session/bin/UserSpace-preferences.txt --mode apply --firstlogin
+
+Redirect stdout only if you capture a report. Leave the terminal stderr in place so the prompt stays visible. Do not run a copy from another folder.
+If the consent record is missing, bad, stale, unknown, or unreadable, or if no typed APPLY is given, that --firstlogin hand-run also reports PENDING_CONSENT, writes nothing, and writes no marker. The notification shows for that run as well. Run the firstlogin installer in apply mode again before retrying if the consent record is not valid.
+After a hand-run with no FAILED record, the script writes firstlogin.done with the line DONE rc=<0|2> run=<id>, mode 0600. If any step is FAILED, no marker is written, and the next run tries again. Backups use the one reused folder ~/Library/Application Support/WorkstationProvisioning/backup/firstlogin-original. Later tries do not overwrite the original plists stored there.
+The script does not accept --output. At login, report records go to stdout, which launchd may send to /dev/null. Do not assume a saved report exists in the user's folder.
+A user can create firstlogin.done themselves and skip their own first-login run.
+Confirm visible behaviour in System Settings after a successful hand-run. Keep PENDING_LOGIN pending until that confirmation. UNKNOWN and MANUAL evidence are never a pass.
+
+
+How to retry a first-login run
+1. If a previous hand-run reported FAILED, no firstlogin.done marker was written. After you inspect current state and obtain a new authorization, run the installed script in Terminal again and type APPLY. The reused backup folder firstlogin-original keeps the original plists and is not overwritten.
+2. If firstlogin.done is present as a regular file owned by the user, and a new authorized run is required, delete only that file. Do not delete a symlink or an unexpected object until it is reviewed.
+3. If the consent record is stale (user-prefs.conf or USERS changed), run the firstlogin installer in apply mode again, with a new typed APPLY, before the hand-run. The agent writes nothing while the record is stale.
+4. Do not rerun a failed mutation blindly. Review the current state first.
+
+
+How to remove the first-login LaunchAgent by hand
+The suite removes nothing and does not roll back automatically. Do this as root, in this order, and only after the user's session is closed.
+
+1. Delete /Library/Management/WorkstationProvisioning-Session/firstlogin-consent.conf. The agent then reports PENDING_CONSENT at any further login.
+2. Delete /Library/LaunchAgents/<label>.plist, where <label> is FIRSTLOGIN_LABEL or the default com.example.workstationprovisioning.firstlogin.
+3. Delete the two installed copies and the bin folder under /Library/Management/WorkstationProvisioning-Session/bin/.
+4. For a user who already logged in: restore each preference from that user's backup folder ~/Library/Application Support/WorkstationProvisioning/backup/<dir>, as in the restore procedure above. An ABSENT marker means delete the live file again. Then delete firstlogin.done.
+Install backups of replaced installer files are under /Library/Management/WorkstationProvisioning/backup/. Use the backup= field from the install report.
+This text example is not authorization to remove the LaunchAgent.
+
+
+How to copy shared resources on a disposable Mac
+Use the launcher module shared. Run it as workstationadmin in that account's own GUI console session, through the launcher.
+Destination is /Users/Shared/<item>. Apply needs the launcher APPLY prompt, the root apply gate, and SHARED_COPY_CONSENT=yes in trusted policy.conf.
+Set these root-policy keys, with no site value in the suite: SHARED_SOURCE_DIR (the operator's own absolute source folder), SHARED_ITEMS (names separated by ":", at most 50), SHARED_COPY_CONSENT=yes, and SHARED_CONFLICT=skip or backup-replace. skip is the default. Any other SHARED_CONFLICT value refuses apply.
+UserSpace-audit reads SHARED_ITEMS from session.conf only, as a read-only presence check. The shared writer reads SHARED_ITEMS from policy.conf only. Keep both lists equal. The session value never changes what is copied.
+The source folder must never hold secrets. Every copied file is published 0644, including a source file that others cannot read.
+Staging and /Users/Shared must be on the same volume. If they are not, the placement fails, and nothing is copied as a fallback.
+SHARED_SOURCE_DIR must be absolute. It must use only letters, digits, space, period, underscore, plus, hyphen, and slash. It must not contain "..", must not contain "//", must not have a trailing slash, and must not be an ancestor of /Users/Shared.
+Every source entry must be a regular file or a real folder owned by root or the operator, not group or other writable, with no setuid, setgid, or sticky bit, with no ACL, and with a safe name. Caps are 500 entries, depth 8, 64 MiB per file, and 256 MiB per item. One unsafe or missing item refuses the whole apply.
+
+1. Obtain explicit authorization for the disposable test Mac and for the selected shared items.
+2. Attach or place the source folder if it lives on removable media. If that folder is absent, the module reports PENDING_CONSENT and writes nothing.
+3. Set the four root-policy keys above in trusted policy.conf.
+4. Return to the workstationadmin GUI console session.
+5. Run the operator inspect command first and record the baseline report.
+
+/bin/bash "$SUITE/workstationadmin-provision.txt" --mode inspect --module shared --output "$REPORT_DIR/shared-inspect-d15-01.txt"
+
+6. Review PROPOSED, ALREADY_CORRECT, BLOCKED_POLICY, PENDING_CONSENT, and UNKNOWN records. Do not treat PENDING_LOGIN as a pass.
+7. If any source item is unsafe or missing, stop. The whole apply is refused.
+8. Run the launcher with --mode apply --module shared and a new output file only after the launcher APPLY prompt.
+
+/bin/bash "$SUITE/workstationadmin-provision.txt" --mode apply --module shared --output "$REPORT_DIR/shared-apply-d15-01.txt"
+
+9. Record CHANGED_VERIFIED, ALREADY_CORRECT, BLOCKED_POLICY, or FAILED for each item. With skip, a differing destination is never touched. With backup-replace, the existing item is moved whole into a backup folder under the policy backup area before the new copy is put in place. A failed step stops the module. Later items are FAILED "not attempted".
+    If the report says "putting the replaced item back failed and its undo failed: a partial root-only folder may remain at the name, the rest stays in the backup", inspect that root-owned folder and remove it by hand only after you check it. The rest of the item stays in the backup.
+    If the report says "the placement failed and its undo failed; a partial root-only folder may remain at the name", inspect that root-owned folder and remove it by hand only after you check it.
+10. Confirm the copied results are real files or folders, owner root:wheel, folders 0755, files 0644, and not links.
+    If the report says something appeared at the destination right before the rename, the item was not placed and nothing was written behind that name. Do not treat that raced entry as the intended copy.
+11. Run verify with a new output file under the same policy.
+
+/bin/bash "$SUITE/workstationadmin-provision.txt" --mode verify --module shared --output "$REPORT_DIR/shared-verify-d15-01.txt"
+
+12. Keep PENDING_LOGIN pending for Finder aliases, URL aliases, and Finder locks. Those steps are manual.
+This text example is not authorization to copy shared resources.
+
+How to install local signed packages
+Use the launcher module apps. Run it as workstationadmin in that account's own GUI console session, through the launcher.
+The suite installs only from a local vendor .pkg or .dmg that you place in a folder. It never downloads, never uses the App Store, never uses an Apple Account, and never makes a purchase.
+Apply needs the launcher APPLY prompt, the root apply gate, APP_INSTALL_CONSENT=yes, a valid APP_TEAM_IDS allowlist, valid APP_PACKAGES and APP_SOURCE_DIR, trusted folders, and the module's own typed APPLY. The operator types APPLY twice through the launcher. If you start the module directly with sudo, type APPLY once at the module prompt.
+Set these root-policy keys, with no site value in the suite:
+APP_LIST remains required. Use Label/BundleName entries as before. Entries with /store are never installed by the suite (PENDING_CONSENT).
+APP_PACKAGES uses Label=FILE entries separated by ":". Label must be a non-store APP_LIST label. FILE ends in .pkg or .dmg, uses only letters, digits, space, period, underscore, plus, or hyphen, has no "/", no leading "." or "-", no trailing space, and is at most 100 characters. Example: ExampleChat=ExampleChat-1.0.pkg:ExampleNotes=ExampleNotes 2.dmg.
+APP_TEAM_IDS uses Label=TEAMID entries separated by ":" only. No commas, no spaces around the separator, and no bare Team IDs. TEAMID is exactly 10 characters from A-Z and 0-9. Example: ExampleChat=ABCDE12345:ExampleNotes=FGHIJ67890. Those example Team IDs are fictional. Each Team ID is bound to its own label.
+APP_SOURCE_DIR is the operator's own absolute folder. Allowed characters are A-Za-z0-9, space, period, underscore, plus, hyphen, and slash. The value must not contain "..", must not contain "//", must not have a trailing slash, must not use a "." or ".." path segment, must be at most 200 characters, and must not be under /Applications, /Library/Management, or /System. The folder and every ancestor must be trusted.
+APP_INSTALL_CONSENT must be yes.
+APP_TEAM_IDS unset or empty refuses apply (BLOCKED_POLICY). That check is first. A package whose label has no APP_TEAM_IDS entry is refused. The package file must be a regular file, not a symlink, owned by root or the operator, not group or other writable, with no setuid, setgid, or sticky bit, with no ACL, and no larger than 4 GiB.
+A .pkg must pass pkgutil --check-signature and spctl -a -t install, with a notarized Developer ID Installer signature and the allowed Team ID. A .dmg must pass codesign --verify --strict with the requirement that includes the Apple anchor, the Developer ID CA OID 1.2.840.113635.100.6.2.6, the Developer ID Application leaf OID 1.2.840.113635.100.6.1.13, and the Team ID, and must pass spctl -a -t open --context context:primary-signature. The app inside must pass codesign --verify --deep --strict with the same requirement and spctl -a -t exec. An unsigned disk image is refused. Ask the vendor for a .pkg or a signed .dmg.
+A .pkg runs the vendor's own installer scripts as root. The Team ID allowlist is that trust decision.
+Any configured package that fails a pre-check refuses the whole apply, and nothing is written. A failure during the install is partial: earlier apps stay, later packages are not attempted, and the run ends FAILED, exit 3. After a FAILED run, inspect /Applications. The suite does not uninstall a partial install.
+An app already at /Applications/<BundleName>.app is never replaced. If it verifies, the result is ALREADY_CORRECT. Otherwise it is BLOCKED_POLICY. Remove or update it by hand. /Applications must be a real folder, owned by root, with no ACL, and mode 0755, or 0775 with group admin.
+The module prompt is: Install N app(s) from verified local packages: <Label> (Team ID X); ...
+Type the exact word APPLY. No terminal, EOF, or another answer reports PENDING_CONSENT and writes nothing.
+Never remove quarantine, change spctl rules, or use --noqtn.
+
+1. Obtain explicit authorization for the selected packages and Team IDs.
+2. Place the vendor .pkg or .dmg files in the APP_SOURCE_DIR folder. If that folder is absent, the module reports PENDING_CONSENT and writes nothing.
+3. Set the root-policy keys above in trusted policy.conf, including APP_LIST labels that match APP_PACKAGES.
+4. Return to the workstationadmin GUI console session.
+5. Run the operator inspect command first and record the baseline report.
+
+/bin/bash "$SUITE/workstationadmin-provision.txt" --mode inspect --module apps --output "$REPORT_DIR/apps-inspect-d16-01.txt"
+
+6. Review install-config, install-source, install-<Label>, apply-gate, PROPOSED, ALREADY_CORRECT, BLOCKED_POLICY, PENDING_CONSENT, FAILED, and UNKNOWN records. Do not treat PENDING_LOGIN as a pass.
+7. If any configured package fails a pre-check, stop. The whole apply is refused.
+8. Run the launcher with --mode apply --module apps and a new output file. Type APPLY at the launcher prompt, then type APPLY again at the module prompt.
+
+/bin/bash "$SUITE/workstationadmin-provision.txt" --mode apply --module apps --output "$REPORT_DIR/apps-apply-d16-01.txt"
+
+9. Record CHANGED_VERIFIED, ALREADY_CORRECT, BLOCKED_POLICY, or FAILED for each package. If the run is FAILED, inspect /Applications. The suite does not uninstall a partial vendor install. If the report says a partial root-only folder may remain at the app name, inspect that folder and remove it by hand only after you check it. If an image could not be detached, the staging folder under the policy folder, name .apps-stage.*, is kept; record that path. An EXIT trap also detaches an image that was still attaching when a signal arrived, and then removes the staging folder when nothing is left mounted.
+10. Run verify with a new output file under the same policy.
+
+/bin/bash "$SUITE/workstationadmin-provision.txt" --mode verify --module apps --output "$REPORT_DIR/apps-verify-d16-01.txt"
+
+11. Keep PENDING_LOGIN and PENDING_CONSENT pending for first launch, sign-in, licensing, and app-privacy-consent. Those steps are manual. The suite does not remove quarantine.
+This text example is not authorization to install packages.
+
+
+
+
+
+
+Keep the visible-behaviour check pending until the restored value is confirmed. For a software-update restore, also keep rollback-manual PENDING_CONSENT until that restore is done and reviewed.
+
+4. Collect same-policy verification and post-audit evidence
+1. Keep the same archive identity and policy revision within the run comparison.
+2. Reinspect the selected operation with a new output filename.
+
+/bin/bash "$SUITE/workstationadmin-provision.txt" --mode verify --module firewall --output "$REPORT_DIR/firewall-verify-d15-01.txt"
+
+Verify does not apply changes. It can append privileged checkpoint history.
+PROPOSED differences become FAILED in verify. Pending consent remains incomplete.
+
+3. Use the final target's real GUI session for its post-audit observation.
+4. Set PLAN_RUN and APPLY_RUN locally to the actual recorded IDs.
+5. Use new output files rather than overwrite earlier evidence.
+
+/bin/bash "$SUITE/UserSpace-audit.txt" --output "$REPORT_DIR/target-post-d15-01.txt" --plan-run "$PLAN_RUN" --apply-run "$APPLY_RUN"
+
+Use the same approved session baseline for the ordinary post-audit form.
+Record missing or mismatched baseline as a refusal, not a pass.
+Do not compare an unvalidated override result as though compatibility passed.
+
+6. Compare req, module, check family, expected state, observed state, and error class.
+7. Treat a missing check as missing evidence, not a pass.
+8. Keep manual, unknown, unsupported, and policy blocks separate from failed checks.
+9. Use protected local mapping for account checks when needed.
+10. Do not equate run-salted acct- labels across runs.
+11. Preserve earlier files when code or policy changes. Start a new versioned run set.
+
+Both launcher and audit accept --plan-run and --apply-run.
+Launcher populates header links and a type=link record. Audit populates header links.
+Links do not ingest evidence or skip work.
+Launcher link IDs permit letters, digits, plus, and hyphens, length 1-48.
+Audit permits the same characters. Use actual generated IDs, not invented identities.
+There is no --target, --resume, or --apply-confirm launcher flag.
+
+5. Complete manual checks separately
+Manual evidence ingestion is not implemented.
+Keep a separate protected operator acceptance record.
+Do not edit generated code reports to turn pending checks into PASS.
+
+1. Verify the actual account login separately from secure token and FileVault unlock.
+2. Complete native Owl and Sunflower picture selection manually where required.
+3. Select migration only through its approved conflict and backup branch.
+4. Verify visible Docks, Finder settings, app launches, and every selected user preference.
+5. Preserve intentional leading spaces in approved resource names.
+6. Verify shared-resource aliases, URL targets, locked flags, sort order, and per-user access.
+7. Complete authorized App Store licensing and authentication manually where required.
+8. Verify each app's official source, signature, architecture, version, and update path.
+9. Keep app installation separate from app sign-in and TCC consent.
+10. Complete Accessibility and Screen Recording consent for conferencing apps through supported controls (check app-privacy-consent).
+11. Restart the affected app manually if required. Test screen share with synthetic content.
+12. Revisit app notifications and extensions after installation and first launch.
+
+Do not silently grant Screen Recording through MDM or edit TCC databases.
+Do not infer camera or microphone grants from the app-privacy-consent requirement.
+Do not install an unrelated office app merely because shared templates exist.
+Do not sign in just to expose unavailable controls.
+
+13. Disable Universal Control edge push before its pointer and keyboard master control.
+14. Disable AirPlay Receiver before Handoff.
+15. Use only the approved AirDrop choice. Do not copy a login password for AirPlay.
+16. Approve Apple Account and Find My ownership before sign-in or activation.
+17. Approve Activation Lock recovery, transfer, and offboarding before activation.
+18. Verify Find My Mac itself for the single designated local owner.
+19. Review the exact iCloud inventory and Internet Accounts after authorized sign-in.
+20. Do not automate cloud deletion, sign-out, or local-data removal.
+
+Use the coverage matrix for the remaining per-requirement acceptance checks.
+Do not interpret the gates module as an implementation of those manual tasks.
+
+6. Verify remote access separately
+1. Confirm a supported local Settings or exact supported MDM route.
+2. Verify ARD allows only named workstationadmin with all required privileges.
+3. Complete Remote Management consent through supported controls.
+4. Test actual ARD control from the authorized client as workstationadmin.
+5. Test rejection with valid credentials for an excluded account.
+6. Include an excluded administrator where available.
+7. Verify SSH service state separately from its named-user allowlist.
+8. Verify the allowlist contains workstationadmin alone, without broad or nested groups.
+9. Complete the supported Allow full disk access for remote users control separately.
+10. Test SSH authentication and resulting identity as workstationadmin.
+11. Test an approved synthetic fixture in a privacy-protected location with valid ordinary permissions.
+12. Record only the access result, not protected content.
+13. Test SSH rejection with valid credentials for an excluded account.
+14. Include an excluded administrator where available.
+15. Repeat both services' policy and acceptance checks after resume or approved reboot.
+
+Do not grant the excluded account new rights to perform the test.
+Do not select All Users or the admin group for either service.
+Do not use an unprotected fixture to claim remote privacy access.
+If suitable fixture testing is unavailable, keep that check pending.
+Do not confuse ARD, SSH, and separate Screen Sharing.
+D15 rescans stored ARD privileges after mutation.
+Stored records still do not prove effective remote rejection or control.
+
+7. Enable FileVault and write the NEW key file (module 6)
+Privilege scope: workstationadmin in its real GUI session, through the launcher. Use native consent only when required.
+This procedure uses the restored filevault module. It is not authorization to enable FileVault. Obtain separate authorization first.
+The suite never prints a recovery key. Do not put a key, a filename with an asset tag, or a destination path in a report, in chat, in logs, or in these documents.
+Use the launcher module filevault. Run it as workstationadmin in that account's own GUI console session, through the launcher.
+When FileVault is off, and the policy keys below are set, apply enables FileVault and writes the NEW personal recovery key to <asset-tag>-FileVault-recovery-key.txt in FILEVAULT_KEY_DIR, mode 600, owner the operator. The operator types the account password into fdesetup, not into this suite.
+The module never disables FileVault, never rotates a key, and never reads an existing key or key file.
+Apply needs the launcher APPLY prompt, the root apply gate, FILEVAULT_CONSENT=yes, a valid FILEVAULT_KEY_DIR, a valid recorded asset tag, FileVault reported exactly off, and the module's own typed APPLY. The operator types APPLY twice through the launcher. If you start the module directly with sudo, type APPLY once at the module prompt.
+Set these root-policy keys, with no site value in the suite:
+FILEVAULT_CONSENT must be exactly yes.
+FILEVAULT_KEY_DIR is the operator-chosen absolute folder. Allowed characters are A-Za-z0-9, space, period, underscore, plus, hyphen, and slash. The value must not contain "//", must not use a "." or ".." path segment, must not have a trailing slash, and must be at most 200 characters. It must not be under /Applications, /Library/Management, /System, /private, /tmp, /var, /usr, /bin, or /sbin, must not be the suite folder or a folder under it, and must not be a cloud-sync folder. Interface section 13e lists the refused cloud-sync name fragments. The folder must already exist, must not be a symlink, and must be on a local disk. Prefer the approved external storage so the key never lands on the internal disk. Do not put FILEVAULT_KEY_DIR in a synced folder. A volume that ignores ownership, or a volume that cannot keep mode 600 and the operator owner, is refused before the enable.
+The asset tag must already be recorded by the names workflow. The file name is <asset-tag>-FileVault-recovery-key.txt. Anything already at that name is refused and is never overwritten.
+If both FILEVAULT_KEY_DIR and FILEVAULT_CONSENT are unset, and FileVault is off, the module reports PENDING_CONSENT key-export "not configured". In that case enable FileVault in Settings and save the NEW key by hand into the same file name, mode 600, in an unsynced local folder. If only one of those keys is set, or a folder, tag, or name check fails, the result is BLOCKED_POLICY, and FileVault is not enabled.
+If FileVault is already on or encrypting, the module reports PENDING_CONSENT "no key exported", does not enable or rotate, and does not read a key. Leave the existing key file untouched.
+The module prompt asks to enable FileVault now and write the NEW recovery key to the asset-tag key file in FILEVAULT_KEY_DIR, mode 600, and says that fdesetup will ask for the operator password. Type the exact word APPLY. No terminal, EOF, or another answer reports PENDING_CONSENT and changes nothing.
+INT, TERM, and HUP are ignored from the enable until the key is on disk. Control-C at the fdesetup password prompt does not cancel the enable.
+A restart can be required on some Macs. The restart unlock test remains manual.
+
+1. Obtain explicit authorization for the FileVault enable and for the key-file folder.
+2. Complete naming first so the asset tag is recorded and valid.
+3. Create the FILEVAULT_KEY_DIR folder on a local disk, preferably the approved external storage. Confirm it is not a symlink, is not synced, and is not a system, policy, or suite folder.
+4. Confirm that <asset-tag>-FileVault-recovery-key.txt does not already exist in that folder.
+5. Set FILEVAULT_CONSENT=yes and FILEVAULT_KEY_DIR in trusted policy.conf. Do not put a site value in the suite. Do not put a key or a secret in the policy file.
+6. Return to the workstationadmin GUI console session.
+7. Run the operator inspect command first and record the baseline report.
+
+/bin/bash "$SUITE/workstationadmin-provision.txt" --mode inspect --module filevault --output "$REPORT_DIR/filevault-inspect-d17-01.txt"
+
+8. Review fv-state, key-export, apply-gate, PROPOSED, BLOCKED_POLICY, PENDING_CONSENT, FAILED, and UNKNOWN records. Do not treat PENDING_LOGIN or PENDING_CONSENT as a pass. If FileVault is not off, or a pre-check is refused, stop.
+9. Run the launcher with --mode apply --module filevault and a new output file. Type APPLY at the launcher prompt, then type APPLY again at the module prompt. When fdesetup asks for the operator password, type that password into fdesetup only.
+
+/bin/bash "$SUITE/workstationadmin-provision.txt" --mode apply --module filevault --output "$REPORT_DIR/filevault-apply-d17-01.txt"
+
+10. Record CHANGED_VERIFIED, PENDING_CONSENT, BLOCKED_POLICY, FAILED, or UNKNOWN. The suite never shows the key. Reports print a key-shaped value as [secret-shape].
+11. If the result is CHANGED_VERIFIED for key-export, confirm locally, without putting the key in a report, that the new file is a regular file, mode 600, owned by the operator, and named <asset-tag>-FileVault-recovery-key.txt. Then copy that file to the approved external storage. That copy is manual and is not verified by code. Prefer to remove the internal copy after the external copy is made, if the key folder was on the internal disk.
+12. If the result is FAILED and FileVault is still off, the empty key file was removed. Nothing was lost. Diagnose, then obtain authorization before a retry.
+13. If the result is FAILED and the report says the NEW recovery key was not saved, do not restart. Create a new personal key by hand with fdesetup changerecovery -personal and save it as <asset-tag>-FileVault-recovery-key.txt, mode 600, in the approved folder. The incomplete file from this run was already removed. The suite never prints the key.
+14. After a crash, SIGKILL, or power loss, check fdesetup status and the key file before any retry. An empty leftover file at the name must be removed by hand only after you check it. Otherwise the next run reports BLOCKED_POLICY because something already exists at the name.
+15. Run verify with a new output file under the same policy.
+
+/bin/bash "$SUITE/workstationadmin-provision.txt" --mode verify --module filevault --output "$REPORT_DIR/filevault-verify-d17-01.txt"
+
+16. Keep key-external-import PENDING_CONSENT until the operator has copied the file to the approved external storage. Keep restart-unlock-test PENDING_LOGIN until the authorized restart unlock test is done for each required account. Preserve the last working unlock account.
+This text example is not authorization to enable FileVault.
+Do not blindly save again, rotate, or re-enable FileVault.
+
+
+Shareable evidence contains statuses only, never key material, filename, destination, or identity.
+
+8. Interpret outcomes and recover cautiously
+0 means complete for evaluated checks, with help/no-op exceptions.
+The former UserSpace-firstlogin inspect script is removed from this archive. The installed first-login agent refuses an unlisted user (exit 4). That refusal is not target compliance.
+2 means incomplete. 3 means failure. 4 means refusal. 64 means usage error.
+MANUAL is an evidence category, not a literal status.
+An operator record cannot change a generated pending result into PASS.
+
+1. Read every failed check and its sanitized error class.
+2. Reinspect machine and stable local account identity before recovery.
+3. Confirm current state rather than trust old checkpoint success.
+4. Review the repair and backup requirements before another mutation.
+5. Route code repair through the code author and review.
+6. Obtain separate authorization for a retry after review.
+7. Retry only the affected approved operation after reinspection.
+8. Keep a new versioned output set for changed code or policy.
+
+Resume means reinspection. No checkpoint or done marker skips work.
+Never blindly rerun a failed mutation.
+Do not use blanket rollback, automatic reboot, or automatic installation.
+Do not undo encryption, migration, cloud state, or accounts through generic recovery.
+
+9. Prepare a report for manual attachment
+There is no automatic telemetry or upload.
+--output creates a local report only. Filtering is best effort, not a privacy guarantee.
+
+1. Inspect every proposed attachment manually, including metadata and errors.
+2. Remove usernames, host identifiers, raw configurations, tokens, keys, and recovery material.
+3. Remove asset tags, internal addresses, URLs, paths, export filenames, and destinations.
+4. Remove unnecessary account pseudonyms or replace them with generic local labels.
+5. Keep stable check families and sanitized expected/observed states and errors.
+6. Keep privileged checkpoints, private policy, identity records, and key files off the upload list.
+7. If a report cannot be made safe, do not attach it.
+8. Have the user attach only the approved report in this chat manually.
+
+No-secret feedback template
+RunID: ____________________
+Related actual plan/apply IDs: ____________________
+D15 archive SHA256: ____________________
+Suite version and suite_id: ____________________
+Entry-script SHA256 and lib_sha256: ____________________
+Approved nonsecret policy revision: ____________________
+Observed policy_id or not-readable: ____________________
+Generic OS build and hardware class: ____________________
+Phase, baseline or plan or apply or verify or post-audit or retry: ____________________
+Compatibility evidence, validated or explicitly unvalidated: ____________________
+Stable req/module/check family: ____________________
+Sanitized expected state: ____________________
+Sanitized observed state: ____________________
+Code status and error class: ____________________
+Separate manual/unknown/policy/unsupported gate: ____________________
+Mutation attempted, yes or no: ____________________
+Export status only, if relevant: ____________________
+Manual external import status only, if relevant: ____________________
+Reviewed repair and authorized retry, yes or no: ____________________
+Attachment manually inspected and approved, yes or no: ____________________
+
+Repeat the check section for each relevant result.
+Do not put identifying or secret values in this template.
+This template is an operator record, not additional promised schema fields.
+
+Static evidence limit
+The D4 reviewer records an independent 144/144 D4 mock run.
+This runbook did not reproduce that run or execute D18. Locked to d18 draft5. PARTIAL, not Mac-validated.
+Trust checks refuse detected ACLs, including @ listings with extra ACL lines.
+OS-unreadable ACLs and path replacement remain risks. Objects are not pinned through use.
+The FileVault key writer is restored in this draft, as described in section 7.
+Do not interpret a safe refusal or disabled write as fulfillment of the requested setting.
+
+Bounded pilot and documentation lock
+Use this runbook only as a bounded partial-pilot candidate after separate test authorization.
+Assume no concurrent changes by root or workstationadmin to trusted suite/data/report paths.
+The code does not pin paths or provide transactional rollback. Reinspect after interruption.
+0700 report-parent and 0644 session-policy modes are deployment recommendations, not exact reader checks.
+Reports use ordinary 0600 creation. A readable directory can reveal filenames and run timing.
+D5-01 capture/metadata marker bypass has a static repair carried into D15. Independent rerun pending.
+Malformed scalar facts remain unknown, gate-blocked or refused, not compatibility approval.
+Header/module-start os/build/arch report unknown when strict readers reject the tool output.
+D4 DV02-DV08 documentation interpretations are settled to actual boundaries, not new code blockers.
+Do not claim full automation, Mac validation, or native security acceptance.
+Locked to d18 draft5. PARTIAL, not Mac-validated. The earlier D17, D16, D15, and D14 documentation lock history is kept. The D12, D13, and D14 staging drafts, and the preserved d15-draft3 and d15-draft5 staging drafts, were not modified.
+
+D18 author evidence
+The author reports exit 0, pass=510, fail=0, runs=1692, timeouts=0, wall 2774.515 seconds, stall_total 1150 seconds, ticker_max_gap 418 seconds, and active 1624 seconds on this draft5 tar. The author record states there was no mutation chain, because the review is diff-only. The harness record states that a run with stall_total greater than 5 seconds is not a clean pass. This is author evidence, not independent QA. These documents are locked to d18 draft5. Status: PARTIAL, not Mac-validated. A premise run of the d13 harness against the d12 code reported 359 passed and 22 failed. This runbook ran none of those tests.
+Central capture checks byte-count/offset/transform/decode integrity, rejects NUL for all routed callers,
+and caps payload at 1 MiB. Failed capture remains not proven, not a passing partial value.
+Version/build/arch/GUID readers remain strict. Invalid metadata is unknown.
+Additional captured reads include admin membership, console helper, token status and firstlogin plist.
+Direct bootstrap, policy/filesystem, provenance and redaction reads remain outside capture.
+Stock transforms are trusted. Consistent lying and untested decoder faults are not proven safe.
+The QA harness run helper has a 60-second timeout with kill escalation after five more seconds.
+Harness progress marks check a 1500-second budget. This is not a hard whole-harness watchdog.
+Some direct harness calls bypass run. Operator commands have no equivalent timeout wrapper.
+Do not copy harness timeout numbers into operator expectations or treat interruption as a clean rollback.
+Scanner traversal errors, unreadable directories and declared-link target contents remain limited.
+Keep the same-policy feedback loop, manual report review/redaction and manual attachments unchanged.
+Status: PARTIAL, not Mac-validated.
+Locked to d18 draft5. PARTIAL, not Mac-validated.

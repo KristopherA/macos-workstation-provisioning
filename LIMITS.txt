@@ -1,0 +1,44 @@
+LIMITS: macOS provisioning suite, release 0.18-d18-draft5
+==========================================================
+
+1. Status: PARTIAL, not Mac-validated. Review record verdict: APPROVED
+   PARTIAL, 0 blockers, on archive SHA256
+   ae0ccc3fd55331372bcb219bb602fd37a697904d42ecbf5f99d513796bc57241
+   (label 0.18-d18-draft5).
+2. NOT run on a real Mac. No script in this package was run on macOS.
+3. NOT verified on Bash 3.2 (the macOS /bin/bash). The independent test run
+   did not have Bash 3.2.
+4. The independent test run used the synthetic test harness only on Linux,
+   with GNU bash and GNU tools, inside a strict bubblewrap sandbox (no
+   network, no host home, read-only suite and system, zero capabilities).
+   The fixtures are synthetic. A pass is not proof that the suite works on
+   a Mac.
+   The independent test run used a 2700 s outer time limit and completed in
+   one run: SUMMARY pass=510 fail=0, runs=1692, timeouts=0, exit 0,
+   1688.5 s, stderr 0 bytes, no stall (stall_total=0s).
+5. The admin-session Dock and Finder writes are disabled by decision. That
+   path is out of scope by design. It is not unfinished work.
+6. Some code comments and interface-status text still describe the
+   admin-session Dock/Finder path as "not restored yet" or say "Disabled is
+   not fulfilled". The documentation is authoritative. That path is out of
+   scope by design.
+7. Open items carried in the review record (not done here):
+   R4  Run the capture and backup code and the full harness under Bash 3.2.57
+       on a Mac.
+   R5  Confirm the Mac behaviour list (DEP enrolment wording,
+       SoftwareUpdate.plist rewrites, cfprefsd after a manual restore).
+   Mac tracking items M44-M83 are open, and earlier items M1-M42 stay
+   tracked (see documentation-plan.txt and
+   interface-plan-for-documentation.txt).
+   Suggestions SUG-A to SUG-H, SUG-K1, SUG-O and SUG-Q are open
+   (non-blocking).
+   SUG-O: code-manifest.txt line 196 still gives the historical draft1
+   version label in the draft1 paragraph.
+   SUG-Q: interface-plan-for-documentation.txt lines 251-253 and
+   code-manifest.txt line 184 still call the "workstationadmin" account
+   name and file-name prefix an open decision. The review record
+   recommends to keep the name. It is a generic convention.
+   Real-hardware testing is planned after completion.
+8. Known stale archive text is listed in documentation-validation.txt.
+9. Operator values (naming templates, paths, policy keys, app list) are
+   placeholders. The operator must supply them through trusted policy files.

@@ -1,0 +1,340 @@
+#!/bin/bash
+# workstationadmin-mod-shared.txt - shared resources R10 (copy from an operator-chosen source, d15)
+# Account: workstationadmin via launcher.
+# Root: required (sudo) for apply.
+# Bash 3.2, stock macOS tools only.
+# Dry run (inspect) is the default; changes happen only with --mode apply.
+# No secret is ever accepted as an argument, written to a log or reported.
+# Requirements: R10 (P03, D10-D12). d15 (module 4): the shared-resource COPY is restored, narrowly. Root: required (sudo) for apply.
+# Source and item list come only from the ROOT-owned policy (no guessed names, no site value in code):
+#   SHARED_SOURCE_DIR  absolute path chosen by the operator (characters A-Za-z0-9 space . _ + - and /; no "..", no "//", no trailing "/")
+#   SHARED_ITEMS       single names separated by ":" (a leading space is kept exactly; no "/", no leading ".", no duplicate, at most 50)
+#   SHARED_COPY_CONSENT  must be "yes" for apply (the operator's root-side decision; unset = inspect only)
+#   SHARED_CONFLICT      skip (default) | backup-replace. skip: a destination that differs is never touched (BLOCKED_POLICY, decision D12).
+#                        backup-replace: the existing item is first MOVED whole into a unique backup folder under the policy
+#                        folder's backup/ (verified), then the new copy is put in place; a failure restores it.
+# Destination is /Users/Shared/<item>. Every item is copied as a REAL copy: never a link, never through a link. Safety rules:
+#   - the source folder and every ancestor must be real folders (the resolved path must equal the given path), owned by root or the operator,
+#     not group/other writable, without an ACL; every entry below an item must be a regular file or folder, owned by root or the operator, not
+#     group/other writable, without setuid/setgid/sticky bits and without an ACL, with a name of A-Za-z0-9 space . _ + - only;
+#     caps: 500 entries, depth 8, 64 MiB per file, 256 MiB per item; ANY unsafe or missing source item refuses the whole apply (zero writes);
+#   - the item is copied into a root-only staging folder (policy folder), compared with the source, given the EXPLICIT owner root:wheel and
+#     the explicit modes 0755 (folders) and 0644 (files), compared again, and only then renamed into /Users/Shared (never over an existing
+#     item: a conflict goes through SHARED_CONFLICT; the placement is atomic and no-clobber, lib wsp_rename_nofollow: link(2) for a file,
+#     mkdir(2) claim for a folder, never following or replacing anything that appears at the name); the result is compared with the source once more;
+#   - nothing is overwritten without a verified backup; inspect (the default) only reports PROPOSED and writes nothing.
+#   - S-4 (d15 draft4, documented, behaviour unchanged): EVERY copied file is published 0644 (world-readable), also a source file that
+#     others cannot read (for example root 0600). The operator chooses the source folder; never put a secret in it.
+# Apply needs: the root apply gate (workstationadmin through sudo, allowed build, SIP, MDM state readable), the launcher's typed APPLY, and
+# SHARED_COPY_CONSENT=yes. A failed step stops the module (the remaining items are FAILED "not attempted"); nothing is rolled back except
+# a replaced item. Aliases, desktop URL aliases and Finder locks need the user's Finder session: reported PENDING_LOGIN (manual).
+# Residual (documented): /Users/Shared is world-writable (sticky) on macOS, so a local user could race a folder into an item name between the
+# last check and the placement. B-1 (d15): the placement claims the name atomically (link(2) / mkdir(2) fail if ANYTHING exists there, a symlink
+# or a dangling symlink included, and never follow it), so a raced entry makes the item FAILED with nothing placed or written behind it; the
+# raced entry itself is left as it is. T confidence: nothing here is validated on a Mac.
+# ---- trusted bootstrap (CR01) ------------------------------------------
+# Runs before anything else: fixed PATH, readonly EUID check, then trust checks
+# on the suite directory, every ancestor and the library, using only absolute
+# tool paths. The fixture hook is honoured only off macOS, as non-root, under a
+# canonical /tmp path; otherwise it is refused, never silently relaxed.
+set +x +a   # no tracing; no allexport (D3-03)
+# d14 (reviewer S1): every function that exists at this point was imported from the caller's environment (exported BASH_FUNC_*) or
+# defined by a BASH_ENV startup file; none is trusted, so all are discarded before the first tool name is resolved. BASH_ENV
+# itself has already been read by this shell (it cannot be cleared in time); unsetting it only protects the child shells.
+for _wsp_f in $(compgen -A function); do unset -f "$_wsp_f"; done
+unset BASH_ENV ENV
+PATH=/usr/bin:/bin:/usr/sbin:/sbin; export PATH
+case "${EUID:-x}" in ''|*[!0-9]*) echo "REFUSED: EUID unreadable" >&2; exit 4;; esac
+_wsp_os=$(/usr/bin/uname -s 2>/dev/null || /bin/uname -s)
+_wsp_fx=0
+if [ -n "${WSP_FIXTURE_ROOT:-}" ]; then
+  if [ "$_wsp_os" = Darwin ] || [ -d /System/Library/CoreServices ] || [ "$EUID" -eq 0 ]; then echo "REFUSED: fixture hook not allowed here" >&2; exit 4; fi
+  _wsp_c=$(cd "$WSP_FIXTURE_ROOT" 2>/dev/null && pwd -P) || { echo "REFUSED: fixture root" >&2; exit 4; }
+  case "$_wsp_c" in /tmp/?*) ;; *) echo "REFUSED: fixture root must canonically be under /tmp" >&2; exit 4;; esac
+  [ "$_wsp_c" = "${WSP_FIXTURE_ROOT%/}" ] || { echo "REFUSED: fixture root has a symlink" >&2; exit 4; }
+  _wsp_fx=1
+fi
+# Inherited suite-internal variables are discarded, including their export
+# attribute (documentation D4-1): unset removes both. Only the validated fixture hook stays.
+for _wsp_v in $(compgen -v WSP_); do case "$_wsp_v" in WSP_FIXTURE_ROOT) ;; *) unset "$_wsp_v";; esac; done
+[ "$_wsp_fx" -eq 1 ] || unset WSP_FIXTURE_ROOT
+_wsp_st() { if [ "$_wsp_os" = Darwin ]; then /usr/bin/stat -f "$1" "$2"; else /usr/bin/stat -c "$3" "$2"; fi; }
+_wsp_noacl() { # deny by default (D3-01): "+" refuses; "@" needs a one-line "ls -lde"
+  _wsp_l=$(/bin/ls -ld "$1" 2>/dev/null) || return 1
+  _wsp_l=${_wsp_l%% *}
+  case "$_wsp_l" in
+    ??????????|??????????.) return 0;;
+    ??????????@) _wsp_n=$(/bin/ls -lde "$1" 2>/dev/null) || return 1
+                 [ "$(printf '%s\n' "$_wsp_n" | /usr/bin/wc -l | /usr/bin/tr -d ' ')" = 1 ];;
+    *) return 1;;
+  esac
+}
+_wsp_trust() { # path: not symlink, no ACL, owner root|workstationadmin (fixture: caller), not group/world writable
+  [ -L "$1" ] && return 1
+  _wsp_noacl "$1" || return 1
+  _wsp_o=$(_wsp_st %Su "$1" %U) || return 1; _wsp_m=$(_wsp_st %Lp "$1" %a) || return 1
+  case "$_wsp_o" in root|workstationadmin) ;; *) [ "$_wsp_fx" -eq 1 ] && [ "$_wsp_o" = "$(/usr/bin/id -un)" ] || return 1;; esac
+  case "$_wsp_m" in *[2367]?|*[2367]) case "$_wsp_m" in 1???) [ -d "$1" ] && [ "$1" != "$_wsp_dir" ] || return 1;; *) return 1;; esac;; esac
+  return 0
+}
+case "$0" in /*) _wsp_self="$0";; *) _wsp_self="$(pwd -P)/$0";; esac
+_wsp_dir=$(cd "${_wsp_self%/*}" 2>/dev/null && pwd -P) || { echo "REFUSED: suite directory" >&2; exit 4; }
+_wsp_a="$_wsp_dir"
+while :; do _wsp_trust "$_wsp_a" || { echo "REFUSED: untrusted suite directory or ancestor" >&2; exit 4; }; [ "$_wsp_a" = / ] && break; _wsp_a=${_wsp_a%/*}; [ -n "$_wsp_a" ] || _wsp_a=/; done
+_wsp_lib="$_wsp_dir/workstationadmin-lib.txt"
+if ! { [ -f "$_wsp_lib" ] && _wsp_trust "$_wsp_lib"; }; then echo "REFUSED: library missing or untrusted" >&2; exit 4; fi
+_wsp_trust "$_wsp_dir/${_wsp_self##*/}" || { echo "REFUSED: entry script untrusted" >&2; exit 4; }
+# Residual risk: a process running as root or workstationadmin can still replace
+# files between this check and use. Those identities are trusted by design.
+# shellcheck source=/dev/null
+. "$_wsp_lib"
+WSP_MODULE="shared"
+WSP_GATE_NEEDS=root
+wsp_parse_mode "$@"
+SH_MAX_ITEMS=50; SH_MAX_ENTRIES=500; SH_MAX_DEPTH=8; SH_MAX_FILE=67108864; SH_MAX_TOTAL=268435456
+dst="$WSP_ROOT/Users/Shared"
+SH_WHY=""; SH_N=0; SH_BYTES=0; SH_KIND=""; SH_C=0; DST_ST=""; STAGE=""
+sh_owner_ok() { wsp_fl_owner_ok "$1" || [ "$1" = "$WSP_OPERATOR" ]; }
+sh_name_ok() { case "$1" in ''|*[!A-Za-z0-9\ ._+-]*) return 1;; esac; [ ${#1} -le 100 ]; }
+sh_item_name_ok() { sh_name_ok "$1" || return 1; case "$1" in .*|-*|*\ ) return 1;; esac; return 0; }
+sh_src_ok() { # the operator's source path: absolute, plain characters, no dot segments, not the destination or inside it, not policy or system folders
+  case "$1" in /?*) ;; *) return 1;; esac
+  case "$1" in *[!A-Za-z0-9\ ._+/-]*|*//*|*/|*/./*|*/../*|*/.|*/..) return 1;; esac
+  [ ${#1} -le 200 ] || return 1
+  case "$1/" in /Users/Shared/*|/Library/Management/*|/System/*) return 1;; esac
+  case "/Users/Shared/" in "$1"/*) return 1;; esac
+  return 0; }
+sh_items_ok() { local _ifs=$IFS _e _n=0 _seen=":"
+  case "$1" in :*|*:|*::*) return 1;; esac
+  set -f; IFS=:
+  # shellcheck disable=SC2086 # intentional ':' split (globbing off)
+  set -- $1
+  IFS=$_ifs; set +f
+  for _e in "$@"; do
+    sh_item_name_ok "$_e" || return 1
+    case "$_seen" in *":$_e:"*) return 1;; esac
+    _seen="$_seen$_e:"; _n=$((_n+1))
+  done
+  [ "$_n" -ge 1 ] && [ "$_n" -le "$SH_MAX_ITEMS" ]; }
+sh_check_one() { local _p=$1 _o _m _s # one object of the SOURCE tree: kind, owner, mode, ACL, caps. Sets SH_KIND, SH_WHY.
+  SH_KIND=""
+  if [ -L "$_p" ]; then SH_WHY="a symlink"; return 1; fi
+  if [ -d "$_p" ]; then SH_KIND=dir; elif [ -f "$_p" ]; then SH_KIND=file; else SH_WHY="not a regular file or folder"; return 1; fi
+  _o=$(wsp_stat_owner "$_p") || { SH_WHY="owner unreadable"; return 1; }
+  sh_owner_ok "$_o" || { SH_WHY="owner is not root or the operator"; return 1; }
+  _m=$(wsp_stat_mode "$_p") || { SH_WHY="mode unreadable"; return 1; }
+  [ ${#_m} -le 3 ] || { SH_WHY="setuid, setgid or sticky bit"; return 1; }
+  wsp_mode_not_gw "$_m" || { SH_WHY="writable by group or others"; return 1; }
+  wsp_no_acl "$_p" || { SH_WHY="has an ACL or its ACL listing is unreadable"; return 1; }
+  SH_N=$((SH_N+1))
+  [ "$SH_N" -le "$SH_MAX_ENTRIES" ] || { SH_WHY="more entries than the cap of $SH_MAX_ENTRIES"; return 1; }
+  if [ "$SH_KIND" = file ]; then
+    _s=$(wsp_stat_size "$_p") || { SH_WHY="size unreadable"; return 1; }
+    case "$_s" in ''|*[!0-9]*) SH_WHY="size unreadable"; return 1;; esac
+    [ "$_s" -le "$SH_MAX_FILE" ] || { SH_WHY="a file is larger than the per-file cap"; return 1; }
+    SH_BYTES=$((SH_BYTES+_s))
+    [ "$SH_BYTES" -le "$SH_MAX_TOTAL" ] || { SH_WHY="the item is larger than the total cap"; return 1; }
+  fi
+  return 0; }
+sh_walk() { local _d=$1 _dep=$2 _e _b
+  [ "$_dep" -le "$SH_MAX_DEPTH" ] || { SH_WHY="folders nested deeper than the cap of $SH_MAX_DEPTH"; return 1; }
+  for _e in "$_d"/* "$_d"/.[!.]* "$_d"/..?*; do
+    [ -e "$_e" ] || [ -L "$_e" ] || continue
+    _b=${_e##*/}
+    sh_name_ok "$_b" || { SH_WHY="a name with characters outside the allowed set"; return 1; }
+    sh_check_one "$_e" || return 1
+    if [ "$SH_KIND" = dir ]; then sh_walk "$_e" $((_dep+1)) || return 1; fi
+  done
+  return 0; }
+sh_src_item() { SH_N=0; SH_BYTES=0; SH_WHY=""   # the whole source item: 0 only if every entry passes
+  sh_check_one "$1" || return 1
+  if [ "$SH_KIND" = dir ]; then sh_walk "$1" 1 || return 1; fi
+  return 0; }
+sh_cnt() { local _e; SH_C=0
+  for _e in "$1"/* "$1"/.[!.]* "$1"/..?*; do [ -e "$_e" ] || [ -L "$_e" ] || continue; SH_C=$((SH_C+1)); done; }
+sh_cmp_obj() { local _o _g _m # S D MODES: one object. 0 equal, 1 differs, 2 bad (a link or a special object in D)
+  if [ -L "$2" ]; then return 2; fi
+  [ -e "$2" ] || return 1
+  if [ -d "$1" ]; then
+    [ -d "$2" ] || { [ -f "$2" ] && return 1; return 2; }
+  else
+    [ -f "$2" ] || { [ -d "$2" ] && return 1; return 2; }
+    cmp -s "$1" "$2" || return 1
+  fi
+  if [ "$3" -eq 1 ]; then
+    _o=$(wsp_stat_owner "$2") || return 1
+    wsp_fl_owner_ok "$_o" || return 1
+    if [ "$WSP_FIXTURE" -eq 0 ]; then _g=$(wsp_stat_group "$2") || return 1; [ "$_g" = wheel ] || return 1; fi
+    _m=$(wsp_stat_mode "$2") || return 1
+    if [ -d "$2" ]; then [ "$_m" = 755 ] || return 1; else [ "$_m" = 644 ] || return 1; fi
+    wsp_no_acl "$2" || return 1
+  fi
+  return 0; }
+sh_cmp() { local _s=$1 _d=$2 _m=$3 _e _b _r _w=0 _a # tree compare, S defines the entries; D must have exactly those (no extra entry)
+  sh_cmp_obj "$_s" "$_d" "$_m"; _r=$?
+  [ "$_r" -eq 0 ] || return "$_r"
+  [ -d "$_s" ] || return 0
+  for _e in "$_s"/* "$_s"/.[!.]* "$_s"/..?*; do
+    [ -e "$_e" ] || [ -L "$_e" ] || continue
+    _b=${_e##*/}
+    sh_cmp "$_e" "$_d/$_b" "$_m"; _r=$?
+    case "$_r" in 0) ;; 2) return 2;; *) _w=1;; esac
+  done
+  sh_cnt "$_s"; _a=$SH_C; sh_cnt "$_d"
+  if [ "$SH_C" -ne "$_a" ]; then
+    for _e in "$_d"/* "$_d"/.[!.]* "$_d"/..?*; do
+      [ -e "$_e" ] || [ -L "$_e" ] || continue
+      if [ -L "$_e" ] || { [ ! -d "$_e" ] && [ ! -f "$_e" ]; }; then return 2; fi
+    done
+    _w=1
+  fi
+  return "$_w"; }
+sh_dst_state() { local _p="$dst/$1" _r # IT SRCPATH: DST_ST = absent | ok | differs | bad
+  if [ ! -e "$_p" ] && [ ! -L "$_p" ]; then DST_ST=absent; return 0; fi
+  sh_cmp "$2" "$_p" 1; _r=$?
+  case "$_r" in 0) DST_ST=ok;; 1) DST_ST=differs;; *) DST_ST=bad;; esac
+  return 0; }
+sh_fix() { local _p=$1 _e # explicit modes: folders 0755, files 0644 (nothing else is ever produced)
+  [ ! -L "$_p" ] || return 1
+  if [ -d "$_p" ]; then
+    chmod 755 "$_p" || return 1
+    for _e in "$_p"/* "$_p"/.[!.]* "$_p"/..?*; do
+      [ -e "$_e" ] || [ -L "$_e" ] || continue
+      sh_fix "$_e" || return 1
+    done
+  elif [ -f "$_p" ]; then chmod 644 "$_p" || return 1
+  else return 1; fi
+  return 0; }
+sh_dst_dir_ok() { local _o _m # /Users/Shared: a real folder, owned by root, no ACL; either not group/other writable or sticky (the macOS default 1777); /Users trusted
+  [ -d "$dst" ] && [ ! -L "$dst" ] || return 1
+  _o=$(wsp_stat_owner "$dst") || return 1
+  wsp_fl_owner_ok "$_o" || return 1
+  wsp_no_acl "$dst" || return 1
+  _m=$(wsp_stat_mode "$dst") || return 1
+  if ! wsp_mode_not_gw "$_m"; then case "$_m" in 1???) ;; *) return 1;; esac; fi
+  wsp_trusted_dir "$WSP_ROOT/Users" "$WSP_OPERATOR"; }
+sh_bad() { # ID TEXT [BACKUPDIR]
+  wsp_status FAILED R10 "$1" "$2" present failed record "" "" "${3:-}"; }
+sh_report() { local _id=$1 # inspect-style line for one item, from SS, SWHY, DST_ST and CONF
+  if [ "$SS" = missing ]; then wsp_status FAILED R10 "$_id" "source item missing" present absent record; return 0; fi
+  if [ "$SS" = unsafe ]; then wsp_status BLOCKED_POLICY R10 "$_id" "source item is not safe to copy: $SWHY; nothing is changed" "" unsafe record; return 0; fi
+  case "$DST_ST" in
+    absent) wsp_status PROPOSED R10 "$_id" "not present in the destination; would be copied (apply, after the typed APPLY)" present absent record;;
+    ok) wsp_status ALREADY_CORRECT R10 "$_id" "destination matches the source in content, owner and mode" match match record;;
+    differs) if [ "$CONF" = backup-replace ]; then wsp_status PROPOSED R10 "$_id" "destination differs; would be replaced after a verified backup (SHARED_CONFLICT=backup-replace)" match differs record
+             else wsp_status BLOCKED_POLICY R10 "$_id" "destination differs; no overwrite rule (D12, SHARED_CONFLICT=skip); nothing is changed" match differs record; fi;;
+    *) wsp_status BLOCKED_POLICY R10 "$_id" "destination holds a symlink or a special object; refused, nothing is changed" "" bad record;;
+  esac; }
+sh_install() { local _id=$1 _it=$2 _s="$SROOT/$2" _st _bk="" _moved=0 _rr _rb _rp # copies ONE item (apply). Returns 0 only if the result was verified.
+  if [ -z "$STAGE" ]; then
+    STAGE=$(mktemp -d "$WSP_BASE/.shared-stage.XXXXXX") || { STAGE=""; sh_bad "$_id" "the staging folder could not be created; nothing copied"; return 1; }
+    chmod 700 "$STAGE" || { sh_bad "$_id" "the staging folder could not be protected; nothing copied"; return 1; }
+  fi
+  _st="$STAGE/$_id"
+  sh_src_item "$_s" || { sh_bad "$_id" "the source item changed or is no longer safe right before the copy; nothing copied"; return 1; }
+  cp -R -P "$_s" "$_st" || { sh_bad "$_id" "the copy into the staging folder failed; nothing changed in the destination"; return 1; }
+  sh_cmp "$_s" "$_st" 0 || { sh_bad "$_id" "the staged copy does not match the source; nothing changed in the destination"; return 1; }
+  sh_fix "$_st" || { sh_bad "$_id" "the explicit modes could not be set on the staged copy; nothing changed in the destination"; return 1; }
+  chown -R -h root:wheel "$_st" || { sh_bad "$_id" "the explicit owner could not be set on the staged copy; nothing changed in the destination"; return 1; }
+  sh_cmp "$_s" "$_st" 1 || { sh_bad "$_id" "the staged copy has the wrong owner or mode; nothing changed in the destination"; return 1; }
+  if [ "$DST_ST" = differs ]; then
+    if [ "$CONF" != backup-replace ]; then sh_bad "$_id" "destination differs and SHARED_CONFLICT is not backup-replace; nothing changed"; return 1; fi
+    wsp_backup_move "$dst/$_it" || { sh_bad "$_id" "the verified backup of the existing item failed; the existing item is untouched"; return 1; }
+    _bk=$WSP_BACKUP_DIR; _moved=1
+  fi
+  if [ -e "$dst/$_it" ] || [ -L "$dst/$_it" ]; then
+    sh_bad "$_id" "something appeared at the destination right before the rename; nothing was overwritten (a replaced item is in the backup)" "$_bk"; return 1
+  fi
+  # B-1 (d15): no-follow, no-clobber placement (lib wsp_rename_nofollow): a link, file or folder planted at the name after the check above is
+  # never followed and never replaced; the item is not placed (FAILED) and nothing is written behind the planted entry.
+  wsp_rename_nofollow "$_st" "$dst/$_it"; _rr=$?
+  if [ "$_rr" -ne 0 ]; then
+    _rb=""
+    if [ "$_moved" -eq 1 ]; then
+      wsp_rename_nofollow "$_bk/$_it" "$dst/$_it"; _rp=$?
+      case "$_rp" in   # d16 draft2 (reviewer S-4): rc 3 = the put-back undo failed too (S-9), so it is not "stays in the backup"
+        0) _rb="; the replaced item was put back";;
+        3) _rb="; putting the replaced item back failed and its undo failed: a partial root-only folder may remain at the name, the rest stays in the backup";;
+        *) _rb="; the replaced item stays in the backup";;
+      esac
+    fi
+    if [ "$_rr" -eq 2 ]; then sh_bad "$_id" "something appeared at the destination right before the rename; refused, nothing placed or written behind it$_rb" "$_bk"; return 1; fi
+    if [ "$_rr" -eq 3 ]; then sh_bad "$_id" "the placement failed and its undo failed; a partial root-only folder may remain at the name$_rb" "$_bk"; return 1; fi   # d16 S-9
+    sh_bad "$_id" "the rename into the destination failed; nothing was placed$_rb" "$_bk"; return 1
+  fi
+  if sh_cmp "$_s" "$dst/$_it" 1; then
+    wsp_status CHANGED_VERIFIED R10 "$_id" "copied; content, owner and mode verified against the source" present present record "" "" "$_bk"; return 0
+  fi
+  sh_bad "$_id" "the result does not match the source (owner, mode or content); nothing is rolled back automatically, see the backup" "$_bk"; return 1; }
+# ---- policy ----
+src=$(wsp_policy SHARED_SOURCE_DIR) || src=""
+items=$(wsp_policy SHARED_ITEMS) || items=""   # items separated by ':' ; leading spaces preserved
+cons=$(wsp_policy SHARED_COPY_CONSENT) || cons=""
+CONF=skip
+if wsp_policy_has SHARED_CONFLICT; then CONF=$(wsp_policy SHARED_CONFLICT) || CONF=invalid; fi
+case "$CONF" in skip|backup-replace) ;; *) CONF=invalid;; esac
+why=""; cfg=ok
+[ "$cons" = yes ] || why="SHARED_COPY_CONSENT=yes is not set in the root-owned policy"
+[ -n "$why" ] || [ "$CONF" != invalid ] || why="SHARED_CONFLICT is not skip or backup-replace"
+SROOT=""; nitems=0; srcpres=0
+if [ -z "$src" ] || [ -z "$items" ]; then
+  cfg=unset; [ -n "$why" ] || why="SHARED_SOURCE_DIR or SHARED_ITEMS is unset"
+  wsp_status BLOCKED_POLICY R10 copy-resources "SHARED_SOURCE_DIR/SHARED_ITEMS unset (D10)" set unset none
+elif ! sh_src_ok "$src" || ! sh_items_ok "$items"; then
+  cfg=bad; [ -n "$why" ] || why="SHARED_SOURCE_DIR or SHARED_ITEMS is not a valid value"
+  wsp_status BLOCKED_POLICY R10 copy-resources "SHARED_SOURCE_DIR or SHARED_ITEMS is not valid (absolute path of A-Za-z0-9 space . _ + - only, no dot segments, not the destination; items are plain single names, no duplicate, at most 50); nothing is changed" "" invalid record
+else
+  SROOT="$WSP_ROOT$src"
+  if [ ! -d "$SROOT" ] || [ -L "$SROOT" ]; then
+    cfg=nosrc; [ -n "$why" ] || why="the source folder is not attached or is a symlink"
+    wsp_status PENDING_CONSENT R10 source-present "source volume not attached or is a symlink" present absent record
+  elif ! wsp_trusted_dir "$SROOT" "$WSP_OPERATOR"; then
+    cfg=nosrc; [ -n "$why" ] || why="the source folder or an ancestor is not a trusted folder (symlink, owner, mode or ACL)"
+    wsp_status BLOCKED_POLICY R10 source-trust "source folder or an ancestor is a symlink, has an untrusted owner or mode, or has an ACL; nothing is changed" present untrusted record
+  else
+    srcpres=1
+  fi
+fi
+SS_A=(); SW_A=(); DS_A=(); IT_A=()
+if [ "$srcpres" -eq 1 ]; then
+  _ifs=$IFS; set -f; IFS=:
+  # shellcheck disable=SC2086 # intentional ':' split (globbing off); the list was validated above
+  set -- $items
+  IFS=$_ifs; set +f
+  for it in "$@"; do
+    IT_A[${#IT_A[@]}]=$it; SWHY=""; DST_ST=""
+    if [ ! -e "$SROOT/$it" ] && [ ! -L "$SROOT/$it" ]; then SS_A[${#SS_A[@]}]=missing; SW_A[${#SW_A[@]}]=""; DS_A[${#DS_A[@]}]=none
+    elif sh_src_item "$SROOT/$it"; then sh_dst_state "$it" "$SROOT/$it"; SS_A[${#SS_A[@]}]=ok; SW_A[${#SW_A[@]}]=""; DS_A[${#DS_A[@]}]=$DST_ST
+    else SS_A[${#SS_A[@]}]=unsafe; SW_A[${#SW_A[@]}]=$SH_WHY; DS_A[${#DS_A[@]}]=none; fi
+  done
+  nitems=${#IT_A[@]}
+  i=0; while [ "$i" -lt "$nitems" ]; do
+    [ "${SS_A[$i]}" = ok ] || { [ -n "$why" ] || why="a source item is missing or not safe to copy (every item must pass)"; }
+    i=$((i+1)); done
+  [ -n "$why" ] || sh_dst_dir_ok || why="/Users/Shared is not a trusted destination folder (a symlink, an untrusted owner or an ACL)"
+  [ -n "$why" ] || wsp_trusted_dir "$WSP_BASE" || why="the policy folder (staging and backups) is not a trusted folder"
+fi
+if [ "$WSP_MODE" = apply ] && [ -n "$why" ]; then
+  WSP_MODE=inspect
+  wsp_status BLOCKED_POLICY P01 apply-gate "apply refused, running inspect only: $why" pass blocked record
+fi
+if [ "$srcpres" -eq 1 ]; then
+  stop=0; i=0
+  while [ "$i" -lt "$nitems" ]; do
+    it=${IT_A[$i]}; id="item$((i+1))"; SS=${SS_A[$i]}; SWHY=${SW_A[$i]}; DST_ST=${DS_A[$i]}
+    if [ "$WSP_MODE" = apply ]; then
+      if [ "$stop" -eq 1 ]; then sh_bad "$id" "not attempted: an earlier item failed"
+      elif [ "$DST_ST" = ok ]; then wsp_status ALREADY_CORRECT R10 "$id" "destination matches the source in content, owner and mode (no change, no backup)" match match record
+      elif [ "$DST_ST" = bad ] || { [ "$DST_ST" = differs ] && [ "$CONF" != backup-replace ]; }; then sh_report "$id"
+      else sh_install "$id" "$it" || stop=1; fi
+    else
+      sh_report "$id"
+    fi
+    case "$it" in " "*) wsp_status PENDING_LOGIN R10 "$id-leading-space" "leading space preserved; sort order check is visual" "" "" manual;; esac
+    i=$((i+1))
+  done
+  [ -z "$STAGE" ] || wsp_backup_discard "$STAGE"
+fi
+wsp_status PENDING_LOGIN R10 aliases "Read Me aliases, desktop URL aliases and Finder locks: Finder session task (D11)" "" "" manual
+wsp_status PENDING_LOGIN R10 per-user-readability "checked by UserSpace-audit run as each user" "" "" manual
+wsp_finish

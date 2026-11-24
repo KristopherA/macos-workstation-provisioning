@@ -1,0 +1,1504 @@
+# workstationadmin-lib.txt - shared library for the provisioning suite.
+# Account: not executable. Sourced by every workstationadmin-* and UserSpace-*
+#   entry script after that script's trusted bootstrap has checked this file,
+#   the suite directory and all ancestors. Inherits the caller's identity.
+# Root: inherits the caller's; it never elevates.
+# Bash 3.2 compatible. No Python, Homebrew or network dependency.
+# Part of the macOS provisioning suite (file list and hashes: code-manifest.txt).
+
+set +x
+set -u
+umask 077
+# PATH is fixed before any external command runs. Callers cannot inject tools.
+PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/libexec
+export PATH
+# EUID is a Bash readonly variable: used for identity before any external tool.
+case "${EUID:-x}" in ''|*[!0-9]*) echo "REFUSED: EUID unreadable" >&2; exit 4;; esac
+
+WSP_OPERATOR="workstationadmin"
+WSP_ROOT=""               # path prefix; "" on a Mac, fixture dir in the fixture harness
+WSP_FIXTURE=0
+WSP_MODE="inspect"
+WSP_MODULE="lib"
+WSP_FAILED=0
+WSP_EXIT_REFUSED=4
+WSP_EXIT_FAILED=3
+
+# --- fixture mode: only allowed off-Mac ----------------------------------
+# Test hook isolation: the hook is refused on anything that looks like macOS
+# (fixed-path uname, or the CoreServices directory), and for root. On a Mac
+# the hook can therefore never weaken a guard or replace a command.
+if [ -n "${WSP_FIXTURE_ROOT:-}" ]; then
+  [ "${_wsp_fx:-0}" -eq 1 ] || { echo "REFUSED: fixture hook not validated by bootstrap" >&2; exit 4; }
+  if [ "$(/usr/bin/uname -s 2>/dev/null || /bin/uname -s)" = "Darwin" ] || [ -d /System/Library/CoreServices ] || [ "$EUID" -eq 0 ]; then
+    echo "REFUSED: fixture mode is not allowed on macOS or as root" >&2
+    exit 4
+  fi
+  _fx=$(cd "$WSP_FIXTURE_ROOT" 2>/dev/null && pwd -P) || { echo "REFUSED: fixture root unreadable" >&2; exit 4; }
+  case "$_fx" in /tmp/?*) ;; *) echo "REFUSED: fixture root must canonically be under /tmp" >&2; exit 4;; esac
+  [ "$_fx" = "${WSP_FIXTURE_ROOT%/}" ] || { echo "REFUSED: fixture root path contains a symlink" >&2; exit 4; }
+  WSP_ROOT="$WSP_FIXTURE_ROOT"
+  WSP_FIXTURE=1
+  PATH="$WSP_FIXTURE_ROOT/stubs:$PATH"
+fi
+
+WSP_BASE="$WSP_ROOT/Library/Management/WorkstationProvisioning"
+WSP_POLICY="$WSP_BASE/policy.conf"
+
+# --- tracing guard -------------------------------------------------------
+wsp_no_trace() {
+  case "$-" in *x*|*v*) echo "REFUSED: shell tracing is on" >&2; exit 4;; esac
+  if [ -n "${BASH_XTRACEFD:-}" ]; then echo "REFUSED: BASH_XTRACEFD set" >&2; exit 4; fi
+  case "${SHELLOPTS:-}" in *xtrace*|*verbose*) echo "REFUSED: SHELLOPTS tracing" >&2; exit 4;; esac
+}
+wsp_no_trace
+# Diagnostics privacy (test review d2): raw tool stderr can carry paths, names or asset
+# identity. From here on, all stderr goes to /dev/null; only fixed suite
+# messages are written, through fd 5 (the original stderr).
+exec 5>&2 2>/dev/null
+
+# --- report contract (schema wsp-report/1) -------------------------------
+# Every record is one line: tab-separated KEY=VALUE fields, prefixed "WSPREC".
+# Values are produced only by wsp_norm (allowlisted characters, truncated)
+# or by fixed text written in this suite. Raw command output is never stored.
+WSP_SCHEMA="wsp-report/1"
+WSP_SUITE_VERSION="0.18-d18-draft5"   # archive revision label; tar sha256 is the identity
+WSP_REPORT_TYPE="plan"        # plan (inspect) | apply-result | verify
+WSP_OUT_FD=1
+: "${WSP_RUN_ID:=}"
+wsp_new_run_id() {
+  local _r
+  _r=$(od -An -N4 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')
+  WSP_RUN_ID="$(date +%Y%m%dT%H%M%S%z)-${_r:-0000}"
+  export WSP_RUN_ID
+}
+# Privacy-first value filter (S01). Order: classify the RAW value first, then
+# accept it unchanged only if it matches the schema; never transform-then-check.
+# wsp_norm VALUE [field]  field = obs (default, strict token) | detail (fixed text)
+#  1. Raw value is checked for identifying classes (account/mail "@", URL, home
+#     path, IP, recovery-key shape, long opaque token, run-redaction words).
+#     Any hit replaces the WHOLE value with a class marker.
+#  2. Otherwise the raw value must fully match the field grammar and length
+#     (fields: obs, detail, and path = an absolute backup-directory path, d12).
+#     Values that do not match are replaced whole with [unrecognized]. Nothing
+#     is truncated, stripped or re-encoded.
+WSP_RE_IP='([0-9]{1,3}\.){3}[0-9]{1,3}|([0-9A-Fa-f]{1,4}:){3,}'
+WSP_RE_SECRET='[A-Za-z0-9]{4}(-[A-Za-z0-9]{4}){3,}'
+WSP_RE_TOKEN='[A-Za-z0-9+/=_]{24,}'
+wsp_norm() {
+  local _f _v _hx=0 _g
+  _v="$1"; _f="${2:-obs}"
+  case "$_v" in '') printf ''; return;; esac
+  case "$_v" in *@*) printf '[account]'; return;; esac
+  case "$_v" in *://*|*www.*|*.com*|*.net*|*.org*|*.invalid*|*.local/*) printf '[url]'; return;; esac
+  # d13 (owner decision): the ONE tilde form. Field class path only: "~/Library/Application Support/WorkstationProvisioning/
+  # backup/<something>" (the own-session backup folder, written by UserSpace-preferences with the home folder replaced by "~", so
+  # the account name never appears). The literal prefix is fixed; anything else starting with "~" is still a [home-path]. The
+  # rest of the value must pass every other rule and the path grammar (checked on the value without the "~").
+  _g=$_v
+  if [ "$_f" = path ]; then
+    case "$_v" in "~/Library/Application Support/WorkstationProvisioning/backup/"?*) _hx=1; _g=${_v#"~"};; esac
+  fi
+  if [ "$_hx" -eq 1 ]; then case "$_g" in */Users/*|*/home/*|/var/root*) printf '[home-path]'; return;; esac
+  else case "$_v" in */Users/*|/Users*|*/home/*|/var/root*|"~"*) printf '[home-path]'; return;; esac; fi
+  # Same POSIX EREs as before, matched in-shell (no fork per field; test review D6
+  # runtime). Regex held in variables: Bash 3.2-safe =~ semantics. The whole
+  # value is searched (a superset of the old per-line grep match).
+  if [[ $_v =~ $WSP_RE_IP ]]; then printf '[ip]'; return; fi
+  if [[ $_v =~ $WSP_RE_SECRET ]]; then printf '[secret-shape]'; return; fi
+  if [ "$_f" != path ] && [[ $_v =~ $WSP_RE_TOKEN ]]; then printf '[opaque-token]'; return; fi
+  for _w in ${WSP_REDACT_WORDS:-}; do case "$_v" in *"$_w"*) printf '[redacted]'; return;; esac; done
+  if [ "$_f" = path ]; then   # d12: absolute path of a backup directory (the one field class that may be long and slash-heavy)
+    [ ${#_v} -le 200 ] || { printf '[unrecognized]'; return; }
+    case "$_g" in /*) ;; *) printf '[unrecognized]'; return;; esac
+    case "$_g" in *..*|*//*|*[!A-Za-z0-9._\ /-]*) printf '[unrecognized]'; return;; esac
+  elif [ "$_f" = detail ]; then
+    [ ${#_v} -le 200 ] || { printf '[unrecognized]'; return; }
+    case "$_v" in *[!A-Za-z0-9\ ._:/%+\(\),\;\&\'=-]*) printf '[unrecognized]'; return;; esac
+  else
+    [ ${#_v} -le 64 ] || { printf '[unrecognized]'; return; }
+    case "$_v" in *[!A-Za-z0-9._:/%+-]*) printf '[unrecognized]'; return;; esac
+  fi
+  printf '%s' "$_v"
+}
+# Run-scoped pseudonym (S06): salt is random per run, never fixed or reported.
+# The launcher passes it to modules on stdin (--salt-stdin), not argv or env.
+wsp_new_salt() { # checked (D7-01): 32 hex chars or refuse. CALL ONLY IN THE MAIN SHELL (D9):
+  # the exit below must end the run; inside $(...) it would end only the subshell.
+  WSP_RID_SALT=$( set -o pipefail; od -An -N16 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n') || WSP_RID_SALT=""
+  case "$WSP_RID_SALT" in *[!0-9a-f]*|'') WSP_RID_SALT=""; echo "REFUSED: random source unavailable" >&5; exit 4;; esac
+  [ ${#WSP_RID_SALT} -eq 32 ] || { WSP_RID_SALT=""; echo "REFUSED: random source unavailable" >&5; exit 4; }; }
+wsp_rid() {
+  local _h
+  if [ "$1" = "$WSP_OPERATOR" ]; then printf 'operator'; return; fi
+  # D9: never generate here. wsp_rid is normally called inside $(...); an exit or an
+  # assignment there would only end that subshell. The salt is created once, in the main
+  # shell, by wsp_new_salt at module start (which refuses with exit 4 on failure).
+  [ -n "${WSP_RID_SALT:-}" ] || { printf 'acct-unavailable'; return; }
+  _h=$( { printf '%s|' "$WSP_RID_SALT"; printf '%s' "$1"; } | shasum -a 256 2>/dev/null | cut -c1-10)
+  printf 'acct-%s' "${_h:-unavailable}"
+}
+wsp_add_redact() { case "$1" in ''|?|??) ;; *) WSP_REDACT_WORDS="${WSP_REDACT_WORDS:-} $1";; esac; }
+
+wsp_emit() { # fields already filtered by wsp_norm or fixed tokens
+  case "$*" in *"
+"*) WSP_WRITE_FAIL=1; return 1;; esac   # newline injection guard
+  if ! printf 'WSPREC\tschema=%s\trun=%s\t%s\n' "$WSP_SCHEMA" "$WSP_RUN_ID" "$*" >&"$WSP_OUT_FD"; then
+    WSP_WRITE_FAIL=1; echo "REPORT WRITE FAILED" >&5; return 1
+  fi
+}
+
+# wsp_status STATUS REQ CHECK DETAIL [EXPECTED] [OBSERVED] [EVIDENCE] [EXIT] [ERRCLASS] [BACKUPDIR]
+# BACKUPDIR (d12): the FULL path of the backup directory of a written preference; it is reported in an
+# optional trailing field "backup=" (path class). The detail text keeps only the last component.
+# EVIDENCE: record | stored-pref | effective-cli | session-ui | manual | none
+# STORED preference values never yield ALREADY_CORRECT for behaviour claims;
+# callers report them with evidence=stored-pref and status PENDING_LOGIN.
+wsp_status() {
+  local _bk _cl _ec _ev
+  case "$1" in
+    ALREADY_CORRECT|CHANGED_VERIFIED|PENDING_LOGIN|PENDING_CONSENT|UNSUPPORTED|FAILED|BLOCKED_POLICY|PROPOSED|UNKNOWN) ;;
+    *) set -- FAILED R02 status-token "invalid status token";;
+  esac
+  # In verify mode a remaining difference is a failure, not a proposal.
+  if [ "$1" = PROPOSED ] && [ "$WSP_MODE" = verify ]; then shift; set -- FAILED "$@"; fi
+  if [ "$1" = "FAILED" ]; then WSP_FAILED=1; fi
+  case "$1" in ALREADY_CORRECT|CHANGED_VERIFIED) ;; *) WSP_INCOMPLETE=1;; esac
+  _ev="${7:-none}"
+  case "$_ev" in record|stored-pref|effective-cli|session-ui|static|mock|manual|none) ;; *) _ev=none;; esac
+  _ec="${8:-}"; case "$_ec" in ''|*[!0-9]*) _ec=na;; esac
+  _cl="${9:-none}"; case "$_cl" in none|permission|not-found|privacy-consent|unsupported-option|timeout|parse|other) ;; *) _cl=other;; esac
+  _bk=""; if [ -n "${10:-}" ]; then _bk="	backup=$(wsp_norm "${10}" path)"; fi
+  wsp_emit "type=check	module=$WSP_MODULE	req=$2	check=$(wsp_norm "$3")	status=$1	expected=$(wsp_norm "${5:-}")	observed=$(wsp_norm "${6:-}")	evidence=$_ev	exit=$_ec	errclass=$_cl	detail=$(wsp_norm "$4" detail)$_bk"
+  wsp_checkpoint "$2" "$3" "$1"
+}
+
+# Run a command (S06): stdout and stderr are captured IN MEMORY only. stderr
+# goes through a pipe to wsp_classify_stream, which prints one class token and
+# discards the text. Nothing is written to disk. Sets WSP_RC and WSP_ERRCLASS.
+# Usage: wsp_run OUTVAR cmd args...
+wsp_classify_stream() {
+  local _c _l
+  _c=none
+  while IFS= read -r _l || [ -n "$_l" ]; do   # last line without newline counts (D3-05)
+    case "$_l" in
+      *"not permitted"*|*"Not permitted"*|*"Full Disk Access"*|*"full disk access"*|*TCC*) _c=privacy-consent;;
+      *"ermission denied"*|*"must be run as root"*|*"requires root"*) [ "$_c" = privacy-consent ] || _c=permission;;
+      *"No such file"*|*"No such key"*|*"not found"*|*"NotFound"*|*"does not exist"*) case "$_c" in none|other) _c=not-found;; esac;;
+      *[Uu]sage*|*unrecognized*|*"invalid option"*|*"illegal option"*) case "$_c" in none|other) _c=unsupported-option;; esac;;
+      *) [ "$_c" = none ] && _c=other;;
+    esac
+  done
+  printf 'WSPCLASS:%s\n' "$_c"
+}
+# Capture boundary (D5-01, D6-01, D6-02). Every tool read goes through here.
+# Tool stdout is split by tee: one copy is counted by wc -c (independent byte
+# count), the other is octal-dumped by od WITH addresses (od's own final
+# offset). Tool stdout never reaches the capture as text, so it cannot forge a
+# control record. The capture must be exactly, in order:
+#   WSPOCT:            then od lines "<octal addr> <ooo>..." then od's final
+#                      "<octal addr>" line
+#   WSPRC:<tool> <head> <tee> <od>  (PIPESTATUS; head bounds memory at MAX+1)
+#   WSPWC:<bytes>                 (wc -c of the tee copy)
+#   WSPCLASS:<class>              (stderr class; stderr text discarded)
+# Integrity invariants, ALL required, else the capture FAILS CLOSED:
+#   C1 frame shape exact; head, tee and od statuses 0; wc count present;
+#   C2 each od address equals the running byte count; final address = number
+#      of triplets = wc count (three independent counts agree);
+#   C3 every triplet is 000..377;
+#   C4 no NUL byte (000) anywhere - checked on the raw encoding, before any
+#      decoding, for EVERY caller (Bash would silently drop NULs);
+#   C5 at most WSP_CAP_MAX bytes (1 MiB);
+#   C0 every substitution stage runs with pipefail and its status is checked
+#      (classifier, validator awk); escapes come from the validator itself;
+#   C6 decoder: printf status 0 and decoded byte length = raw length minus the
+#      trailing LFs that $(...) strips (LC_ALL=C byte length).
+# On failure: WSP_RC=255, WSP_ERRCLASS=parse, value empty, WSP_CAPTURE names
+# the failed invariant; the tool's own status stays in WSP_TOOL_RC. Callers
+# already treat WSP_RC != 0 as unknown/not proven, so every caller fails closed.
+# WSP_ONELINE=1 iff raw bytes: >=1 byte, one LF which is the last byte, no CR.
+WSP_CAP_MAX=1048576
+WSP_NL='
+'
+wsp_run_fail() { # OUTVAR REASON: capture-stage failure -> fail closed, value empty
+  WSP_RC=255; WSP_ERRCLASS=parse; WSP_ONELINE=0; WSP_CAPTURE="$2"; WSP_TOOL_RC=255
+  eval_safe_set "$1" ""; }
+wsp_run() {
+  # Output API (D2-01): helper internals use the reserved __wsp_ prefix and the
+  # caller's output name may not use it, so no caller variable is shadowed.
+  local __wsp_ov __wsp_cap __wsp_meta __wsp_oct __wsp_o __wsp_n __wsp_tl LC_ALL=C
+  __wsp_ov="$1"; shift
+  WSP_ONELINE=0; WSP_CAPTURE=ok; WSP_TOOL_RC=255
+  case "$__wsp_ov" in __wsp_*|''|*[!A-Za-z0-9_]*|[0-9]*) WSP_RC=255; WSP_ERRCLASS=other; WSP_CAPTURE=usage; return 1;; esac
+  # Every external stage below is status-checked (D7-01): pipefail inside each
+  # substitution, and the substitution's own status tested with ||.
+  __wsp_cap=$( set -o pipefail; { { { printf 'WSPOCT:\n' >&4
+        "$@" | head -c $((WSP_CAP_MAX + 1)) | tee /dev/fd/6 | od -Ao -v -to1 >&4
+        printf 'WSPRC:%s %s %s %s\n' "${PIPESTATUS[0]}" "${PIPESTATUS[1]}" "${PIPESTATUS[2]}" "${PIPESTATUS[3]}" >&4
+      } 6>&1 | { __wsp_n=$(wc -c) || __wsp_n=x; printf 'WSPWC:%s\n' "$__wsp_n" >&4; }
+    } 2>&1 | wsp_classify_stream; } 4>&1 ) || { wsp_run_fail "$__wsp_ov" capture-pipeline; return 0; }
+  # One awk pass validates C1-C5 and ALSO produces the decoder escapes, so no
+  # further external transform exists. Output, exactly three lines:
+  #   <escapes \0ooo...>  /  <status toolrc bytes trailingLF oneline class>  /  WSPEND
+  __wsp_meta=$( set -o pipefail; printf '%s\n' "$__wsp_cap" | awk -v max="$WSP_CAP_MAX" '
+    function oct(s,  i,v) { v=0; for (i=1;i<=length(s);i++) v=v*8+substr(s,i,1); return v }
+    function bad(x) { if (st=="ok") st=x }
+    BEGIN { st="ok"; ph=0; n=0; fin=-1; tl=0 }
+    /^WSPRC:/ && ph==1 { ph=2; if (fin<0) bad("truncated")
+        if ($0 !~ /^WSPRC:[0-9]+ [0-9]+ [0-9]+ [0-9]+$/) { bad("frame"); next }
+        split(substr($0,7),r," "); trc=r[1]; if (r[2]!=0 || r[3]!=0 || r[4]!=0) bad("transform"); next }
+    ph==0 { if ($0=="WSPOCT:") ph=1; else bad("frame"); next }
+    ph==1 {
+      if (st!="ok") next
+      if (fin>=0) { bad("frame"); next }
+      if ($0 !~ /^ *[0-7]+( +[0-7][0-7][0-7])* *$/) { bad("frame"); next }
+      if (oct($1)!=n) { bad("offset"); next }
+      if (NF==1) { fin=n; next }
+      for (k=2;k<=NF;k++) { t=$k
+        if (t+0>377) { bad("range"); next }
+        if (t=="000") { bad("nul"); next }
+        if (t=="015") cr=1
+        if (t=="012") { lf++; lastlf=n; tl++ } else tl=0
+        n++; if (n<=max) printf "\\0%s", t }
+      if (n>max) bad("limit")
+      next }
+    ph==2 { if ($0 ~ /^WSPWC: *[0-9]+ *$/) { w=$0; sub(/^WSPWC: */,"",w); sub(/ *$/,"",w); wc=w+0; ph=3; next } bad("frame"); next }
+    ph==3 { if ($0 ~ /^WSPCLASS:[a-z-]+$/) { cl=substr($0,10); ph=4; next } bad("frame"); next }
+    ph==4 { bad("frame"); next }
+    END { if (ph!=4) bad("frame")
+      if (wc!=n) bad("count")
+      one=(st=="ok" && n>=2 && lf==1 && lastlf==n-1 && !cr) ? 1 : 0
+      m=sprintf("%s %s %d %d %d %s", st, (trc==""?255:trc), n, tl, one, (cl==""?"other":cl))
+      printf "\n%-80s\nWSPEND\n", m }') \
+    || { wsp_run_fail "$__wsp_ov" validator; return 0; }
+  # Split in-shell with fixed offsets only (no fork, no pattern scan of the
+  # large string): <escapes> LF <meta padded to 80> LF WSPEND
+  __wsp_n=${#__wsp_meta}
+  if [ "$__wsp_n" -lt 88 ] || [ "${__wsp_meta:$((__wsp_n - 7)):7}" != "${WSP_NL}WSPEND" ] || [ "${__wsp_meta:$((__wsp_n - 88)):1}" != "$WSP_NL" ]; then
+    wsp_run_fail "$__wsp_ov" validator-output; return 0; fi
+  __wsp_oct=${__wsp_meta:0:$((__wsp_n - 88))}
+  __wsp_meta=${__wsp_meta:$((__wsp_n - 87)):80}
+  case "$__wsp_meta" in *"$WSP_NL"*) wsp_run_fail "$__wsp_ov" validator-output; return 0;; esac
+  # shellcheck disable=SC2086 # split the fixed awk tokens into fields
+  set -- $__wsp_meta
+  WSP_CAPTURE=${1:-frame}; WSP_TOOL_RC=${2:-255}; __wsp_n=${3:-0}; __wsp_tl=${4:-0}; WSP_ONELINE=${5:-0}; WSP_ERRCLASS=${6:-other}
+  case "$WSP_CAPTURE" in ok|frame|truncated|transform|offset|range|nul|limit|count) ;; *) WSP_CAPTURE=frame;; esac
+  case "$__wsp_n$__wsp_tl" in *[!0-9]*) WSP_CAPTURE=frame; __wsp_n=0; __wsp_tl=0;; esac
+  case "$WSP_TOOL_RC" in ''|*[!0-9]*) WSP_TOOL_RC=255;; esac
+  case "$WSP_ERRCLASS" in none|permission|not-found|privacy-consent|unsupported-option|other) ;; *) WSP_ERRCLASS=other;; esac
+  [ $(( ${#__wsp_oct} )) -eq $(( __wsp_n * 5 )) ] || { [ "$WSP_CAPTURE" != ok ] || WSP_CAPTURE=count; }
+  __wsp_o=""
+  if [ "$WSP_CAPTURE" = ok ]; then
+    if __wsp_o=$(printf '%b' "$__wsp_oct"); then
+      [ "${#__wsp_o}" -eq $((__wsp_n - __wsp_tl)) ] || WSP_CAPTURE=decode
+    else WSP_CAPTURE=decode; fi
+  fi
+  if [ "$WSP_CAPTURE" = ok ]; then
+    WSP_RC=$WSP_TOOL_RC
+    if [ "$WSP_RC" -ne 0 ] && [ "$WSP_ERRCLASS" = none ]; then WSP_ERRCLASS=other; fi
+  else
+    WSP_RC=255; WSP_ERRCLASS=parse; WSP_ONELINE=0; __wsp_o=""
+  fi
+  eval_safe_set "$__wsp_ov" "$__wsp_o"
+}
+# Assign to a variable named by a validated identifier without eval.
+eval_safe_set() {
+  case "$1" in ''|*[!A-Za-z0-9_]*|[0-9]*) return 1;; esac
+  printf -v "$1" '%s' "$2"
+}
+
+wsp_script_hash() { shasum -a 256 "$1" 2>/dev/null | awk '{print $1}' | tr -c 'a-f0-9' '_' | cut -c1-64; }
+wsp_header() { # report header: provenance (G21). No machine id, serial, user or host.
+  [ -n "$WSP_RUN_ID" ] || wsp_new_run_id
+  wsp_emit "type=header	suite=$WSP_SUITE_VERSION	script=$(wsp_norm "$(basename "$1")")	sha256=$(wsp_script_hash "$1")	lib_sha256=$(wsp_script_hash "$_wsp_lib")	suite_id=$(wsp_suite_id)	tz=$(date +%z)	os=$(wsp_read_os_version || printf unknown)	build=$(wsp_read_os_build || printf unknown)	arch=$(wsp_read_arch || printf unknown)	report=$WSP_REPORT_TYPE	plan_run=$(wsp_norm "${WSP_LINK_PLAN:-not-provided}")	apply_run=$(wsp_norm "${WSP_LINK_APPLY:-not-provided}")	evidence_mode=$( [ "$WSP_FIXTURE" -eq 1 ] && echo mock || echo live)"
+}
+wsp_suite_id() { # opaque identity of the whole code closure in the suite directory
+  # one shasum over the same ordered file list: byte-identical to the former per-file loop
+  ( cd "$_wsp_dir" && shasum -a 256 workstationadmin-*.txt UserSpace-*.txt ) 2>/dev/null | shasum -a 256 | cut -c1-64
+}
+wsp_policy_id() { # opaque policy revision; root only; never the values
+  if [ -r "$WSP_POLICY" ] && wsp_check_file "$WSP_POLICY"; then shasum -a 256 "$WSP_POLICY" | cut -c1-16; else printf 'not-readable'; fi
+}
+wsp_module_start() {
+  local _h
+  [ -n "$WSP_RUN_ID" ] || wsp_new_run_id
+  if [ "$WSP_REPORT_TYPE" != audit ]; then
+    case "$WSP_MODE" in inspect) WSP_REPORT_TYPE=plan;; apply) WSP_REPORT_TYPE=apply-result;; verify) WSP_REPORT_TYPE=verify;; esac
+  fi
+  # Collect identifying names for whole-value redaction before any record.
+  wsp_add_host_redactions
+  _h=$(wsp_read_self) && [ "$_h" != "$WSP_OPERATOR" ] && wsp_add_redact "$_h"
+  wsp_add_redact "${SUDO_USER:-}"; wsp_add_redact "${HOME:-}"
+  wsp_emit "type=module-start	module=$WSP_MODULE	sha256=$(wsp_script_hash "$_wsp_self")	lib_sha256=$(wsp_script_hash "$_wsp_lib")	suite_id=$(wsp_suite_id)	policy_id=$(wsp_policy_id)	os=$(wsp_read_os_version || printf unknown)	build=$(wsp_read_os_build || printf unknown)	arch=$(wsp_read_arch || printf unknown)	report=$WSP_REPORT_TYPE	mode=$WSP_MODE	euid=$( [ "$EUID" -eq 0 ] && echo root || echo user)"
+}
+
+wsp_refuse() {
+  wsp_emit "type=refused	module=$WSP_MODULE	reason=$(wsp_norm "$1")" 2>/dev/null
+  echo "REFUSED: $WSP_MODULE: $1" >&5; exit 4
+}
+
+# Exit codes (all scripts): 0 = COMPLETE (every check ALREADY_CORRECT or
+# CHANGED_VERIFIED); 2 = INCOMPLETE (no FAILED, but pending/unknown/blocked/
+# unsupported/proposed remain); 3 = at least one FAILED; 4 = refused by a guard;
+# 64 = usage error. Exit 0 is the only "complete" signal.
+wsp_finish() {
+  local _c _f
+  _c=yes; if [ "${WSP_INCOMPLETE:-0}" -eq 1 ]; then _c=no; fi
+  _f=no; if [ "$WSP_FAILED" -ne 0 ]; then _f=yes; fi
+  wsp_emit "type=module-end	module=$WSP_MODULE	failed=$_f	complete=$_c"
+  if [ "$WSP_FAILED" -ne 0 ] || [ "${WSP_WRITE_FAIL:-0}" -ne 0 ]; then exit 3; fi
+  if [ "$_c" = "no" ]; then exit 2; fi
+  exit 0
+}
+
+# --- trusted directory check (S02) ------------------------------------
+# wsp_trusted_dir DIR : DIR and every ancestor must be real directories (the
+# canonical path must equal the given path, so no ancestor is a symlink),
+# owned by root or the caller, and not group/world writable unless sticky.
+# ACL deny-by-default (D3-01). macOS ls shows "@" (xattrs) IN PREFERENCE to
+# "+" (ACL), so the mode suffix alone cannot prove "no ACL". Rule:
+#   suffix none/"."   -> no ACL marker;
+#   suffix "+"        -> refuse;
+#   suffix "@" (Mac)  -> list with "ls -lde": exactly ONE line (no ACL entry
+#                        lines) is required, else refuse; listing failure refuses.
+# Residual (documented): if the OS fails to READ an ACL, ls may print no entry;
+# no stock tool exposes that failure, so it cannot be detected here.
+# ACL CONTENT is never evaluated: any detected entry refuses. Path check/use
+# races by the same uid or root remain (bounded pilot limits, DV06).
+wsp_acl_verdict() { # mode-field  line-count-of-ls-lde (or "na") -> ok|refuse
+  case "$1" in
+    ??????????|??????????.) echo ok;;
+    ??????????+) echo refuse;;
+    ??????????@) case "$2" in 1) echo ok;; *) echo refuse;; esac;;
+    *) echo refuse;;
+  esac
+}
+wsp_no_acl() {
+  local _l _m _n
+  _l=$(/bin/ls -ld "$1") || return 1
+  _m=${_l%% *}; _n=na
+  case "$_m" in ??????????@)
+    _l=$(/bin/ls -lde "$1") || return 1
+    _n=$(printf '%s\n' "$_l" | wc -l | tr -d ' ');;
+  esac
+  [ "$(wsp_acl_verdict "$_m" "$_n")" = ok ]
+}
+wsp_trusted_dir() {
+  local _c _d _extra _m _me _o
+  _d="$1"; _extra="${2:-}"
+  case "$_d" in /*) ;; *) return 1;; esac
+  _c=$(cd "$_d" 2>/dev/null && pwd -P) || return 1
+  [ "$_c" = "${_d%/}" ] || [ "$_d" = / ] || return 1
+  _me=$(wsp_read_self) || return 1
+  while :; do
+    [ -d "$_c" ] && [ ! -L "$_c" ] || return 1
+    wsp_no_acl "$_c" || return 1
+    _o=$(wsp_stat_owner "$_c") || return 1
+    case "$_o" in root|"$_me") ;; *) [ -n "$_extra" ] && [ "$_o" = "$_extra" ] || return 1;; esac
+    _m=$(wsp_stat_mode "$_c") || return 1
+    if ! wsp_mode_not_gw "$_m"; then
+      case "$_m" in 1???) [ "$_c" != "$_d" ] || return 1;; *) return 1;; esac   # sticky ancestors only
+    fi
+    [ "$_c" = / ] && break
+    _c=$(dirname "$_c")
+  done
+  return 0
+}
+
+# --- private report writer (G25, S02) ------------------------------------
+# The file is opened ONCE (umask 077, noclobber) and all records go to that
+# held descriptor; the path is never reopened. Noclobber is NOT a universal
+# exclusive no-follow open on Bash 3.2 (see below). Protection = refusing any
+# existing object, then PATH checks (not descriptor identity). A same-UID/root
+# replacement between check and open remains possible (pilot limit, DV02).
+# The parent must be caller-owned, not group/other writable, ACL-free; group/
+# other READ is not rejected (a private 0700 parent is recommended, DV03).
+# Every write is checked; a failed write makes the run exit 3.
+wsp_open_report() {
+  local _rd _rp _me
+  _rp="$1"
+  case "$_rp" in /*) ;; *) echo "REFUSED: --output must be absolute" >&5; exit 64;; esac
+  case "$_rp" in *..*|*"
+"*) echo "REFUSED: --output path rejected" >&5; exit 64;; esac
+  _rd=$(dirname "$_rp")
+  wsp_trusted_dir "$_rd" || { echo "REFUSED: output directory not trusted (symlink, owner or mode)" >&5; exit 4; }
+  _me=$(wsp_read_self) || { echo "REFUSED: caller identity unreadable" >&5; exit 4; }
+  [ "$(wsp_stat_owner "$_rd")" = "$_me" ] || { echo "REFUSED: output directory not owned by caller" >&5; exit 4; }
+  # Bash 3.2 noclobber opens an EXISTING non-regular object (FIFO/device)
+  # without O_EXCL (D3-02). Refuse any existing object first; the directory is
+  # caller-owned and not writable by others, so only the caller or root could
+  # create one in between (documented same-trusted-actor limit). After the open
+  # the PATH must name a regular, empty file (pathname checks only).
+  if [ -e "$_rp" ] || [ -L "$_rp" ]; then echo "REFUSED: output path already exists" >&5; exit 4; fi
+  umask 077
+  set -C
+  if ! { exec 3>"$_rp"; } 2>/dev/null; then set +C; echo "REFUSED: output exists or could not be created exclusively" >&5; exit 4; fi
+  set +C
+  if [ -L "$_rp" ] || [ ! -f "$_rp" ] || [ -s "$_rp" ]; then exec 3>&-; echo "REFUSED: output is not a new regular file" >&5; exit 4; fi
+  WSP_OUT_FD=3
+}
+
+# --- operator app list (public-repo rule: no site-specific names in code) ----
+# APP_LIST (policy.conf and session.conf) = entries separated by ':' of
+#   Label/BundleName[/store]     e.g.  ExampleChat/ExampleChat:ExampleSheets/ExampleSheets/store
+# BundleName is the /Applications/<BundleName>.app folder name; "store" marks
+# App Store delivered apps. Label: letters digits space . + - ; BundleName: same
+# plus none of / . leading. WSP_APP_ENTRIES = newline separated "label|bundle|store".
+# status 0 only if every entry is well formed and there is at least one.
+wsp_app_list() {
+  local _e _l _b _t _r _ifs _n
+  WSP_APP_ENTRIES=""; _n=0
+  # D9: empty parts (leading, trailing or doubled ':') are rejected, not silently dropped by the split
+  case "$1" in ''|:*|*:|*::*) return 1;; esac
+  _ifs=$IFS; set -f; IFS=:
+  # shellcheck disable=SC2086 # intentional ':' split (globbing off)
+  set -- $1
+  IFS=$_ifs; set +f
+  for _e in "$@"; do
+    _l=${_e%%/*}; _r=${_e#*/}; [ "$_r" != "$_e" ] || return 1
+    _b=${_r%%/*}; _t=""; [ "$_b" = "$_r" ] || { _t=${_r#*/}; [ "$_t" = store ] || return 1; }
+    case "$_l$_b" in ''|*[!A-Za-z0-9\ .+-]*) return 1;; esac
+    case "$_l" in ''|" "*|*" ") return 1;; esac
+    case "$_b" in ''|.*|" "*|*" ") return 1;; esac
+    case "$_t" in ''|store) ;; *) return 1;; esac
+    WSP_APP_ENTRIES="$WSP_APP_ENTRIES$_l|$_b|$_t$WSP_NL"; _n=$((_n+1))
+  done
+  [ "$_n" -gt 0 ]; }
+
+# --- session policy (non-secret, root-owned, world-readable) --------------
+WSP_SESSION_DIR="$WSP_ROOT/Library/Management/WorkstationProvisioning-Session"
+WSP_SESSION_KEYS=" USERS USER_PREFS USER_PREFS_CONSENT HOT_CORNERS_POLICY SHARED_ITEMS TARGET_OS_MAJOR APP_LIST "   # TARGET_OS_MAJOR: audit baseline (B01)
+wsp_session_policy() {
+  local _sp _v
+  case "$WSP_SESSION_KEYS" in *" $1 "*) ;; *) return 1;; esac
+  _sp="$WSP_SESSION_DIR/session.conf"
+  wsp_check_file "$_sp" || return 1
+  [ "$(wsp_stat_owner "$_sp")" = "root" ] || [ "$WSP_FIXTURE" -eq 1 ] || return 1
+  _v=$(awk -F= -v k="$1" '$1==k {sub(/^[^=]*=/, ""); v=$0} END{print v}' "$_sp")
+  case "$_v" in *'`'*|*'$('*|*';'*|*'&'*|*'|'*|*'<'*|*'>'*|'') return 1;; esac
+  printf '%s\n' "$_v"
+}
+
+# --- argument parsing for modules ---------------------------------------
+wsp_usage() { echo "usage error: $1 (value not echoed)" >&5; exit 64; }
+wsp_help() { # print the entry script's header comment block, no side effects
+  /usr/bin/sed -n '2,/^# ---- trusted bootstrap/p' "$_wsp_self" | /usr/bin/sed '$d' | /usr/bin/sed 's/^# \{0,1\}//'
+  exit 0
+}
+wsp_parse_mode() {
+  WSP_TARGETS=""
+  WSP_RID_SALT=""; export -n WSP_RID_SALT   # never inherited, never exported
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -h|--help) wsp_help;;
+      --mode) shift; [ $# -gt 0 ] || wsp_usage "missing mode"
+              case "$1" in inspect|apply|verify) WSP_MODE="$1";; *) wsp_usage "bad mode";; esac ;;
+      --run-id) shift; [ $# -gt 0 ] || wsp_usage "missing run id"
+              case "$1" in *[!0-9A-Za-z+-]*|'') wsp_usage "bad run id";; esac
+              [ ${#1} -le 48 ] || wsp_usage "bad run id"; WSP_RUN_ID="$1" ;;
+      --salt-stdin) IFS= read -r WSP_RID_SALT || WSP_RID_SALT=""
+              case "$WSP_RID_SALT" in *[!0-9a-f]*|'') WSP_RID_SALT="";; esac ;;
+      *) wsp_usage "unknown argument (secrets are never accepted as arguments)";;
+    esac
+    shift
+  done
+  # One salt per process, set before any pseudonym (reviewer suggestion).
+  [ -n "$WSP_RID_SALT" ] || wsp_new_salt
+  wsp_module_start
+  [ "$WSP_MODE" = apply ] && wsp_apply_gate
+  return 0
+}
+
+# Intentionally disabled apply (draft 2): the module stays inspect-only.
+wsp_disable_apply() {
+  if [ "$WSP_MODE" = apply ]; then
+    wsp_status UNSUPPORTED R02 apply-disabled "apply is disabled in this draft: $1" enabled disabled none
+    WSP_MODE=inspect
+  fi
+}
+# --- apply gate (CR02) ---------------------------------------------------
+# Every module re-checks the prerequisites at its own apply boundary, also when
+# started directly. If any fails, the module drops to inspect mode and records
+# BLOCKED_POLICY; unrelated inspection continues. WSP_GATE_NEEDS lists
+# root|user (elevation) and is set by the module before wsp_parse_mode.
+# Mandatory write prerequisites (D2-02), shared by every root apply boundary:
+# operator is admin, SIP reported enabled, MDM enrollment state readable.
+# Prints a fixed reason when a prerequisite is not proven, else nothing.
+wsp_mdm_state() { # prints yes|no|unknown from strict profiles grammar (d12: "Enrolled via DEP: Yes" counts as yes)
+  local _pr _ln _mv
+  wsp_run _pr profiles status -type enrollment
+  [ "$WSP_RC" -eq 0 ] || { echo unknown; return; }
+  wsp_line_match "$_pr" "MDM enrollment: " || { echo unknown; return; }
+  _mv=$WSP_MATCH
+  # d12 (reviewer S-g): a Mac registered in DEP but not yet enrolled would otherwise read as unmanaged. The DEP line
+  # is optional (older output); when present it must be exactly one line "Yes" or "No", else unknown.
+  if wsp_any_line "$_pr" "Enrolled via DEP: "; then
+    wsp_line_match "$_pr" "Enrolled via DEP: " || { echo unknown; return; }
+    case "$WSP_MATCH" in "Enrolled via DEP: No") ;; "Enrolled via DEP: Yes") echo yes; return;; *) echo unknown; return;; esac
+  fi
+  case "$_mv" in "MDM enrollment: No") echo no;; "MDM enrollment: Yes"|"MDM enrollment: Yes (User Approved)") echo yes;; *) echo unknown;; esac
+}
+wsp_sip_state() { # prints enabled|other|unknown
+  local _s
+  wsp_run _s csrutil status
+  [ "$WSP_RC" -eq 0 ] || { echo unknown; return; }
+  case "$_s" in "System Integrity Protection status: enabled.") echo enabled;; "System Integrity Protection status: disabled.") echo other;; *) echo unknown;; esac
+}
+wsp_prereq_why() {
+  [ "$(wsp_admin_state "$WSP_OPERATOR")" = yes ] || { echo "operator admin membership not proven"; return; }
+  [ "$(wsp_sip_state)" = enabled ] || { echo "SIP not proven enabled"; return; }
+  [ "$(wsp_mdm_state)" != unknown ] || { echo "MDM enrollment state unreadable"; return; }
+}
+wsp_apply_gate() {
+  local _bl _maj _why _ov _bv _ctx
+  _why=""
+  if [ "$WSP_FIXTURE" -eq 0 ]; then
+    [ "$_wsp_os" = Darwin ] || _why="not macOS"
+    case "${WSP_GATE_NEEDS:-root}" in
+      root) [ "$EUID" -eq 0 ] || _why="needs sudo"
+            [ "${SUDO_USER:-}" = "$WSP_OPERATOR" ] || _why="must be started by workstationadmin through sudo";;
+      user) [ "$EUID" -ne 0 ] || _why="must not run as root"
+            ;;
+    esac
+  fi
+  # Identity/console context through the checked readers, in every mode (D7-02).
+  if [ -z "$_why" ]; then
+    case "${WSP_GATE_NEEDS:-root}" in root) _ctx=$(wsp_context_why operator-sudo);; *) _ctx=$(wsp_context_why operator-user);; esac
+    [ "$_ctx" = ok ] || _why=${_ctx:-context check failed}
+  fi
+  if [ -z "$_why" ] && [ "${WSP_GATE_NEEDS:-root}" = root ]; then
+    _maj=$(wsp_policy TARGET_OS_MAJOR) || _why="TARGET_OS_MAJOR unset (D01)"
+    _bl=$(wsp_policy ALLOWED_BUILDS) || _why="ALLOWED_BUILDS unset (D01)"
+    if [ -z "$_why" ]; then
+      _ov=$(wsp_read_os_version) || _why="OS version unreadable or malformed"
+      _bv=$(wsp_read_os_build) || _why="OS build unreadable or malformed"
+      case "$_maj" in ''|*[!0-9]*) _why="TARGET_OS_MAJOR not numeric";; esac
+      [ -z "$_why" ] && [ "${_ov%%.*}" != "$_maj" ] && _why="macOS major not allowed by policy"
+      if [ -z "$_why" ]; then case " $_bl " in *" $_bv "*) ;; *) _why="build not in ALLOWED_BUILDS";; esac; fi
+      [ -n "$_why" ] || _why=$(wsp_prereq_why)
+    fi
+  fi
+  if [ -n "$_why" ]; then
+    WSP_MODE=inspect
+    wsp_status BLOCKED_POLICY P01 apply-gate "apply refused, running inspect only: $_why" pass blocked record
+  fi
+}
+
+# --- validation ----------------------------------------------------------
+wsp_valid_shortname() {
+  case "$1" in ''|*[!a-z0-9._-]*|[._-]*) return 1;; esac
+  [ ${#1} -le 31 ] || return 1
+  return 0
+}
+
+# File must exist, be a regular non-symlink file, owned by root or operator,
+# not group/world writable. Parent dir same rules.
+wsp_check_file() {
+  local _dir _f _own _perm
+  _f="$1"
+  [ -L "$_f" ] && return 1
+  [ -f "$_f" ] || return 1
+  _own=$(wsp_stat_owner "$_f") || return 1
+  case "$_own" in root|"$WSP_OPERATOR") ;; *) [ "$WSP_FIXTURE" -eq 1 ] || return 1;; esac
+  _perm=$(wsp_stat_mode "$_f") || return 1
+  wsp_mode_not_gw "$_perm" || return 1
+  wsp_no_acl "$_f" || return 1
+  _dir=$(dirname "$_f")
+  # whole ancestry: owner root/caller/operator, no ACL, not writable by others (D2-03)
+  wsp_trusted_dir "$_dir" "$WSP_OPERATOR" || return 1
+  return 0
+}
+# mode as octal string like 755 or 644; reject group or other write bit
+wsp_mode_not_gw() {
+  local _g _m _o
+  _m="$1"; _g=${_m%?}; _g=${_g#"${_g%?}"}; _o=${_m#"${_m%?}"}
+  case "$_g" in 2|3|6|7) return 1;; esac
+  case "$_o" in 2|3|6|7) return 1;; esac
+  return 0
+}
+wsp_stat_owner() {
+  if [ "$WSP_FIXTURE" -eq 1 ] || [ "$(uname -s)" != "Darwin" ]; then stat -c %U "$1"; else stat -f %Su "$1"; fi
+}
+wsp_stat_mode() {
+  if [ "$WSP_FIXTURE" -eq 1 ] || [ "$(uname -s)" != "Darwin" ]; then stat -c %a "$1"; else stat -f %Lp "$1"; fi
+}
+# d15 (module 4): group name and size in bytes, same shape as wsp_stat_owner / wsp_stat_mode.
+wsp_stat_group() {
+  if [ "$WSP_FIXTURE" -eq 1 ] || [ "$(uname -s)" != "Darwin" ]; then stat -c %G "$1"; else stat -f %Sg "$1"; fi
+}
+wsp_stat_size() {
+  if [ "$WSP_FIXTURE" -eq 1 ] || [ "$(uname -s)" != "Darwin" ]; then stat -c %s "$1"; else stat -f %z "$1"; fi
+}
+
+# --- policy reader (never sourced) --------------------------------------
+# wsp_policy KEY -> prints value, returns 1 if unset/empty/unreadable.
+WSP_POLICY_KEYS=" TARGET_OS_MAJOR ALLOWED_BUILDS COMPUTER_NAME LOCAL_HOST_NAME HOST_NAME \
+ SSH_ENABLE ARD_ENABLE FIREWALL_ENABLE FIRSTLOGIN_CONSENT FIRSTLOGIN_LABEL \
+ ACCOUNT_ADMIN_ROLE SHARED_SOURCE_DIR SHARED_ITEMS SHARED_COPY_CONSENT SHARED_CONFLICT \
+ DISPLAYSLEEP_BATTERY DISPLAYSLEEP_AC SCREENSAVER_IDLE_SECONDS ADMIN_DOCK_APPS \
+ USER_DOCK_APPS USER_PREF_PROFILE APP_TEAM_IDS ACCOUNT_CREATE_ROUTE \
+ COMPUTER_NAME_TEMPLATE LOCAL_HOST_NAME_TEMPLATE APP_LIST APP_PACKAGES APP_SOURCE_DIR APP_INSTALL_CONSENT FILEVAULT_KEY_DIR FILEVAULT_CONSENT \
+ UPDATES_AUTO_CHECK UPDATES_AUTO_DOWNLOAD UPDATES_CONFIG_DATA UPDATES_CRITICAL UPDATES_MACOS_INSTALL UPDATES_APP_STORE "
+wsp_policy() {
+  local _k _line _owner _v
+  case "$WSP_POLICY_KEYS" in *" $1 "*) ;; *) return 1;; esac
+  wsp_check_file "$WSP_POLICY" || return 1
+  _owner=$(wsp_stat_owner "$WSP_POLICY")
+  [ "$_owner" = "root" ] || [ "$WSP_FIXTURE" -eq 1 ] || return 1
+  _v=""
+  while IFS= read -r _line || [ -n "$_line" ]; do
+    case "$_line" in "#"*|"") continue;; esac
+    _k=${_line%%=*}
+    [ "$_k" = "$1" ] || continue
+    _v=${_line#*=}
+  done < "$WSP_POLICY"
+  # Reject characters that could matter if a value ever reached a shell.
+  case "$_v" in *'`'*|*'$('*|*';'*|*'&'*|*'|'*|*'<'*|*'>'*) return 1;; esac
+  [ -n "$_v" ] || return 1
+  printf '%s\n' "$_v"
+}
+
+# wsp_policy_has KEY (d15, Q2): 0 if the trusted policy file has a line "KEY=..." at all (even an empty or rejected value), else 1.
+# wsp_policy cannot tell an unset key from a rejected value; callers that must refuse a rejected value use this.
+wsp_policy_has() { local _line
+  case "$WSP_POLICY_KEYS" in *" $1 "*) ;; *) return 1;; esac
+  wsp_check_file "$WSP_POLICY" || return 1
+  while IFS= read -r _line || [ -n "$_line" ]; do
+    case "$_line" in "$1="*) return 0;; esac
+  done < "$WSP_POLICY"
+  return 1; }
+
+# --- checkpoints (secret-free, root-owned) ------------------------------
+wsp_hw_uuid() {
+  ioreg -rd1 -c IOPlatformExpertDevice 2>/dev/null | awk -F'"' '/IOPlatformUUID/{print $4; exit}'
+}
+wsp_checkpoint() {
+  local _hw _key _op _sd _sf
+  [ "$EUID" -eq 0 ] || [ "$WSP_FIXTURE" -eq 1 ] || return 0
+  [ "$WSP_MODE" = "inspect" ] && return 0
+  [ -d "$WSP_BASE" ] || return 0
+  wsp_trusted_dir "$WSP_BASE" || return 0
+  _hw=$(wsp_hw_uuid); case "$_hw" in ''|*[!A-Fa-f0-9-]*) return 0;; esac
+  _sd="$WSP_BASE/state/$_hw"
+  [ -L "$WSP_BASE" ] && return 0
+  [ -L "$WSP_BASE/state" ] && return 0
+  [ -L "$_sd" ] && return 0
+  mkdir -p -m 700 "$_sd" 2>/dev/null || return 0
+  _key="${WSP_CHECKPOINT_ID:-system}"
+  case "$_key" in *[!A-Za-z0-9-]*) return 0;; esac
+  _sf="$_sd/${WSP_MODULE}__${_key}.state"
+  [ -L "$_sf" ] && return 0
+  _op=$(printf '%s' "$2" | tr -c 'A-Za-z0-9_.-' '_')
+  printf '%s|%s|%s|%s\n' "$1" "$_op" "$3" "$(date +%s)" >> "$_sf"
+}
+# Read last checkpoint status for req/op; prints only a validated token.
+wsp_last_status() {
+  local _hw _key _r _sf
+  _hw=$(wsp_hw_uuid); _key="${WSP_CHECKPOINT_ID:-system}"
+  _sf="$WSP_BASE/state/$_hw/${WSP_MODULE}__${_key}.state"
+  [ -f "$_sf" ] && [ ! -L "$_sf" ] || return 1
+  _r=$(awk -F'|' -v r="$1" -v o="$2" '$1==r && $2==o {s=$3} END{print s}' "$_sf")
+  case "$_r" in ALREADY_CORRECT|CHANGED_VERIFIED|PENDING_LOGIN|PENDING_CONSENT|UNSUPPORTED|FAILED|BLOCKED_POLICY|UNKNOWN) printf '%s\n' "$_r";; *) return 1;; esac
+}
+
+# --- backup before replacing a file ------------------------------------
+# wsp_backup PLIST (d11, reviewer B1). Returns 0 ONLY for a verified backup (the copy compares equal to
+# the source) or a verified absence (an explicit ABSENT marker). Refuses: any symlink (tested FIRST, so a
+# dangling link is refused too), anything that exists but is not a regular file (directory, FIFO, device),
+# a failed or unequal copy. The backup directory is unique (mktemp -d, mode 700; two runs in the same
+# second keep both pristine copies). Sets WSP_BACKUP_DIR (full path; callers report only its last component).
+wsp_backup() {
+  local _p=$1 _root _t _bd _n
+  WSP_BACKUP_DIR=""
+  [ -L "$_p" ] && return 1
+  _root="${2:-$WSP_BASE/backup}"
+  if [ -z "${2:-}" ] && [ "$EUID" -ne 0 ] && [ "$WSP_FIXTURE" -eq 0 ]; then
+    _root="$HOME/Library/Application Support/WorkstationProvisioning/backup"
+  fi
+  # d12 (reviewer S-c): a symlinked backup root is refused before anything is made or changed.
+  [ -L "$_root" ] && return 1
+  mkdir -p "$_root" || return 1
+  [ -d "$_root" ] && [ ! -L "$_root" ] || return 1
+  chmod 700 "$_root" || return 1
+  _t=$(date +%Y%m%d%H%M%S) || return 1
+  _bd=$(mktemp -d "$_root/$_t.XXXXXX") || return 1
+  chmod 700 "$_bd" || { wsp_backup_discard "$_bd"; return 1; }
+  _n=${_p##*/}
+  if [ -e "$_p" ]; then
+    [ -f "$_p" ] || { wsp_backup_discard "$_bd"; return 1; }
+    cp -p "$_p" "$_bd/$_n" || { wsp_backup_discard "$_bd"; return 1; }
+    [ -f "$_bd/$_n" ] && [ ! -L "$_bd/$_n" ] || { wsp_backup_discard "$_bd"; return 1; }
+    cmp -s "$_p" "$_bd/$_n" || { wsp_backup_discard "$_bd"; return 1; }
+  else
+    printf 'ABSENT %s\n' "$_n" > "$_bd/$_n.ABSENT" || { wsp_backup_discard "$_bd"; return 1; }
+  fi
+  WSP_BACKUP_DIR=$_bd
+  return 0
+}
+# d12 (reviewer S-b): a failed backup leaves nothing that could be mistaken for a restore point. Removes only the
+# directory this call just made (a plain directory, not a symlink), best effort; the caller already fails closed.
+wsp_backup_discard() { [ -d "$1" ] && [ ! -L "$1" ] && rm -rf "$1"; return 0; }
+# wsp_backup_check PLIST: called right before the first write after wsp_backup; 0 only if the file is
+# still exactly what was backed up (or still absent). Any change -> 1 and the caller writes nothing.
+wsp_backup_check() {
+  local _p=$1 _n=${1##*/}
+  [ -n "$WSP_BACKUP_DIR" ] || return 1
+  [ ! -L "$_p" ] || return 1
+  if [ -f "$WSP_BACKUP_DIR/$_n.ABSENT" ]; then
+    [ ! -e "$_p" ] || return 1
+  else
+    [ -f "$_p" ] || return 1
+    cmp -s "$_p" "$WSP_BACKUP_DIR/$_n" || return 1
+  fi
+  return 0
+}
+
+# --- asset tag: one validator and one trusted reader for all modules (CR06) --
+# Grammar: 1-24 of A-Z a-z 0-9 and hyphen; no leading or trailing hyphen.
+wsp_valid_asset_tag() { case "$1" in ''|*[!A-Za-z0-9-]*|-*|*-) return 1;; esac; [ ${#1} -le 24 ]; }
+wsp_read_asset_tag() { # prints the validated tag from root-only state, or fails
+  local _af _t
+  _af="$WSP_BASE/asset-tag"
+  wsp_check_file "$_af" || return 1
+  [ "$(wsp_stat_owner "$_af")" = root ] || [ "$WSP_FIXTURE" -eq 1 ] || return 1
+  [ "$(wsp_stat_mode "$_af")" = 600 ] || return 1
+  IFS= read -r _t < "$_af" || return 1
+  wsp_valid_asset_tag "$_t" || return 1
+  printf '%s' "$_t"
+}
+
+# --- interactive confirmation -------------------------------------------
+# wsp_confirm "question" TOKEN : requires a TTY and the exact token.
+wsp_confirm() {
+  local _ans
+  # Requires a controlling terminal; stdin may be a pipe (salt hand-off).
+  { : < /dev/tty; } 2>/dev/null || return 1
+  printf '%s\nType %s to continue: ' "$1" "$2" > /dev/tty
+  IFS= read -r _ans < /dev/tty || return 1
+  [ "$_ans" = "$2" ]
+}
+# wsp_confirm_apply "question" TOKEN (d13): the typed confirmation of UserSpace-preferences apply. Needs a terminal on STDIN
+# (the stock tty tool, read through wsp_run, exits 0 and prints a /dev/ name) and the exact token typed on that stdin; the
+# prompt goes to fd 5, the caller's real stderr (fd 2 is /dev/null after the preamble). Piped or redirected stdin, no terminal, EOF or any other text = refused; there is no non-interactive
+# path and no test-only branch (the harness provides a "tty" stub on PATH and a stdin file; the library cannot tell).
+# d14 (reviewer S1): the terminal check is the stock tool by ABSOLUTE path ($WSP_ROOT is empty on a Mac, so "/usr/bin/tty"; the test host
+# harness puts its stub at the same path under the fixture root, like socketfilterfw). Together with the bootstrap, which discards every
+# imported function, a caller can no longer fake a terminal with an exported function named tty. It is NOT authentication: any pty
+# wrapper (script, expect) is a real terminal, and the word APPLY is a consent step (a speed bump), never a credential.
+wsp_confirm_apply() { local _t="" _a
+  wsp_run _t "$WSP_ROOT/usr/bin/tty"
+  [ "$WSP_RC" -eq 0 ] && [ "$WSP_CAPTURE" = ok ] || return 1
+  case "$_t" in /dev/?*) ;; *) return 1;; esac
+  printf '%s\nType %s to continue: ' "$1" "$2" >&5   # d14: fd 5 is the caller's real stderr (the preamble above sends fd 2 to /dev/null); in d13 this prompt went to fd 2 and was never shown
+  IFS= read -r _a || return 1
+  [ "$_a" = "$2" ]; }
+
+# --- platform facts ------------------------------------------------------
+# --- strict scalar readers (D5-01): the ONLY way the suite reads OS version,
+# build, architecture or a user GUID. Each prints the value (no newline) and
+# returns 0 only if: the tool exit status is 0, WSP_ONELINE=1 from wsp_run's raw
+# framing, and the decoded line matches the exact grammar. Otherwise prints
+# nothing and returns 1; callers report unknown/UNKNOWN/blocked.
+# wsp_one_line VALUE: call RIGHT AFTER wsp_run (kept as the shared predicate).
+wsp_one_line() {
+  [ "${WSP_ONELINE:-0}" = 1 ] || return 1
+  case "$1" in ''|*"
+"*|*$'\r'*) return 1;; esac
+  return 0
+}
+wsp_valid_version() { # N.N or N.N.N, whole argument
+  case "$1" in ''|*"
+"*|*$'\r'*) return 1;; esac
+  local LC_ALL=C _re='^[0-9]{1,3}\.[0-9]{1,3}(\.[0-9]{1,3})?$'
+  [[ $1 =~ $_re ]]; }
+wsp_valid_build() { # e.g. 24F74, 24A5331b
+  case "$1" in ''|*"
+"*|*$'\r'*) return 1;; esac
+  local LC_ALL=C _re='^[0-9]{2}[A-Z][0-9]{1,5}[a-z]?$'
+  [[ $1 =~ $_re ]]; }
+wsp_read_os_version() { local _v; wsp_run _v sw_vers -productVersion
+  [ "$WSP_RC" -eq 0 ] && wsp_one_line "$_v" && wsp_valid_version "$_v" && printf '%s' "$_v"; }
+wsp_read_os_build() { local _v; wsp_run _v sw_vers -buildVersion
+  [ "$WSP_RC" -eq 0 ] && wsp_one_line "$_v" && wsp_valid_build "$_v" && printf '%s' "$_v"; }
+wsp_read_arch() { local _v; wsp_run _v uname -m
+  [ "$WSP_RC" -eq 0 ] && wsp_one_line "$_v" || return 1
+  case "$_v" in arm64|x86_64) printf '%s' "$_v";; *) return 1;; esac; }
+wsp_os_major() { local _v; _v=$(wsp_read_os_version) || return 1; printf '%s' "${_v%%.*}"; }
+# --- identity and session context (D7-02): typed readers on wsp_run --------
+# Fixture mode reads context through *_ctx stubs so tests can inject values;
+# live mode reads the native tools. Value printed only if: exit 0, raw single
+# line, account grammar. wsp_read_self is the REAL process user (file trust).
+wsp_valid_account() { case "$1" in ''|[!A-Za-z_]*|*[!A-Za-z0-9_.-]*) return 1;; esac; [ ${#1} -le 32 ]; }
+wsp_ctx_run() { # OUTVAR TOOL ARGS... (fixture: TOOL_ctx stub)
+  local _o _t; _o="$1"; _t="$2"; shift 2
+  if [ "$WSP_FIXTURE" -eq 1 ]; then wsp_run "$_o" "${_t}_ctx" "$@"; else wsp_run "$_o" "$_t" "$@"; fi; }
+wsp_read_user() { local _v; wsp_ctx_run _v id -un
+  [ "$WSP_RC" -eq 0 ] && wsp_one_line "$_v" && wsp_valid_account "$_v" && printf '%s' "$_v"; }
+wsp_read_console() { local _v; wsp_ctx_run _v stat -f %Su /dev/console
+  [ "$WSP_RC" -eq 0 ] && wsp_one_line "$_v" && wsp_valid_account "$_v" && printf '%s' "$_v"; }
+wsp_read_self() { local _v; wsp_run _v id -un
+  [ "$WSP_RC" -eq 0 ] && wsp_one_line "$_v" && wsp_valid_account "$_v" && printf '%s' "$_v"; }
+# ROLE -> prints exactly "ok" or a reason. Callers require "ok" (an empty or
+# killed substitution is a failure, never a pass).
+wsp_context_why() {
+  local _me _cu
+  case "$1" in
+    operator-sudo)
+      _cu=$(wsp_read_console) || { echo "console user unreadable or malformed"; return 0; }
+      [ "$_cu" = "$WSP_OPERATOR" ] || { echo "workstationadmin is not the console user"; return 0; };;
+    operator-user)
+      _me=$(wsp_read_user) || { echo "identity unreadable or malformed"; return 0; }
+      [ "$_me" = "$WSP_OPERATOR" ] || { echo "must run as workstationadmin"; return 0; }
+      _cu=$(wsp_read_console) || { echo "console user unreadable or malformed"; return 0; }
+      [ "$_cu" = "$_me" ] || { echo "workstationadmin is not the console GUI user"; return 0; };;
+    target-gui)
+      _me=$(wsp_read_user) || { echo "identity unreadable or malformed"; return 0; }
+      [ "$_me" != "$WSP_OPERATOR" ] || { echo "UserSpace scripts run as a target user, not workstationadmin"; return 0; }
+      _cu=$(wsp_read_console) || { echo "console user unreadable or malformed"; return 0; }
+      [ "$_cu" = "$_me" ] || { echo "caller is not the console GUI user (UID switching is not a GUI session)"; return 0; };;
+    *) echo "unknown context role"; return 0;;
+  esac
+  echo ok; }
+wsp_add_host_redactions() { local _n _h
+  for _n in LocalHostName ComputerName HostName; do wsp_run _h scutil --get "$_n"; if [ "$WSP_RC" -eq 0 ] && [ -n "$_h" ]; then wsp_add_redact "$_h"; fi; done
+  return 0; }
+# --- in-shell text helpers (D7-01): parse captured text without forks -------
+# wsp_line_match TEXT PREFIX: WSP_MATCH = the single line starting with PREFIX;
+# status 0 only if exactly one such line.
+wsp_line_match() { local _l _n _ifs; _n=0; WSP_MATCH=""; _ifs=$IFS; set -f; IFS=$WSP_NL
+  for _l in $1; do case "$_l" in "$2"*) _n=$((_n+1)); WSP_MATCH=$_l;; esac; done
+  IFS=$_ifs; set +f; [ "$_n" -eq 1 ]; }
+# wsp_field TEXT KEY: prints the value of the single "KEY value" line (exactly two fields).
+wsp_field() { wsp_line_match "$1" "$2 " || return 1
+  set -f
+  # shellcheck disable=SC2086 # intentional split into fields (globbing off)
+  set -- $WSP_MATCH; set +f; [ $# -eq 2 ] || return 1; printf '%s' "$2"; }
+# wsp_words TEXT: WSP_WORDS = whitespace-normalised text, WSP_NWORDS = count.
+# shellcheck disable=SC2034,SC2086 # WSP_WORDS/WSP_NWORDS read by modules; intentional split (globbing off)
+wsp_words() { set -f; set -- $1; set +f; WSP_NWORDS=$#; WSP_WORDS="$*"; }
+
+# wsp_any_line TEXT PREFIX: 0 if some line of TEXT starts with PREFIX (literal), else 1. No fork.
+wsp_any_line() { local _l _ifs _r=1; _ifs=$IFS; set -f; IFS=$WSP_NL
+  for _l in $1; do case "$_l" in "$2"*) _r=0; break;; esac; done
+  IFS=$_ifs; set +f; return "$_r"; }
+# wsp_any_line_re TEXT ERE: 0 if some line of TEXT matches the ERE, 1 if none, 2 if the ERE is
+# invalid (never a silent "no match"). Bash [[ =~ ]], pattern in a variable (Bash 3.2 form). No fork.
+wsp_any_line_re() { local _l _ifs _r=1 _rc LC_ALL=C _re=$2; _ifs=$IFS; set -f; IFS=$WSP_NL
+  for _l in $1; do [[ $_l =~ $_re ]]; _rc=$?
+    if [ "$_rc" -eq 0 ]; then _r=0; break; elif [ "$_rc" -ne 1 ]; then _r=2; break; fi; done
+  IFS=$_ifs; set +f; return "$_r"; }
+# wsp_re TEXT ERE: whole-string match; 0 match, 1 no match, 2 invalid ERE. Bash [[ =~ ]], no fork.
+wsp_re() { local LC_ALL=C _re=$2; [[ $1 =~ $_re ]]; case $? in 0) return 0;; 1) return 1;; *) return 2;; esac; }
+# wsp_user_state NAME: prints yes | no | unknown (D8, tightened D9). Read through wsp_run:
+# "yes" needs exit 0 and one numeric UniqueID line. "no" needs ALL of: exit 56, EMPTY stdout
+# and the not-found error class (the real message carries eDSRecordNotFound); exit 56 alone
+# is only the low byte of a DS error code, so it is not enough. Everything else, including
+# a capture failure, is unknown, never "missing". Confirm exit 56 on a Mac.
+wsp_user_state() { local _u _v
+  wsp_run _u dscl . -read "/Users/$1" UniqueID
+  if [ "$WSP_RC" -eq 0 ]; then
+    _v=$(wsp_field "$_u" UniqueID:) || _v=""
+    case "$_v" in ''|*[!0-9]*) printf 'unknown';; *) printf 'yes';; esac
+  elif [ "$WSP_RC" -eq 56 ] && [ -z "$_u" ] && [ "$WSP_ERRCLASS" = not-found ] && [ "$WSP_CAPTURE" = ok ]; then printf 'no'
+  else printf 'unknown'; fi; }
+# --- software-update readers (d10). All through wsp_run; results in globals (never $(...)) ---
+# wsp_pref_read DOMAIN KEY: sets WSP_PREF = on | off | unset | unknown, plus WSP_PREF_RC/_CLASS.
+# "on"/"off" need exit 0, a one-line capture and exactly 1 or 0 (a defaults boolean). "unset" needs
+# exit 1 AND empty stdout AND the not-found class AND a valid capture. Everything else is unknown
+# (never "unset"), so a failing or lying tool can never become "write it" or "already correct".
+wsp_pref_read() { local _v
+  wsp_run _v defaults read "$1" "$2"
+  WSP_PREF_RC=$WSP_RC; WSP_PREF_CLASS=$WSP_ERRCLASS
+  if [ "$WSP_RC" -eq 0 ]; then
+    if wsp_one_line "$_v"; then case "$_v" in 1) WSP_PREF=on;; 0) WSP_PREF=off;; *) WSP_PREF=unknown;; esac; else WSP_PREF=unknown; fi
+  elif [ "$WSP_RC" -eq 1 ] && [ -z "$_v" ] && [ "$WSP_ERRCLASS" = not-found ] && [ "$WSP_CAPTURE" = ok ]; then WSP_PREF=unset
+  else WSP_PREF=unknown; fi; }
+# wsp_su_schedule: sets WSP_SCHED = on | off | unknown from the read-only "softwareupdate --schedule"
+# (exit 0, one line, exactly "Automatic check is on" / "Automatic check is off").
+wsp_su_schedule() { local _s
+  WSP_SCHED=unknown
+  wsp_run _s softwareupdate --schedule
+  [ "$WSP_RC" -eq 0 ] && wsp_one_line "$_s" || return 0
+  case "$_s" in "Automatic check is on") WSP_SCHED=on;; "Automatic check is off") WSP_SCHED=off;; esac; }
+# wsp_profile_state (d11, reviewer B3): sets WSP_PROF to none | managed | unknown.
+#   managed  any profile text naming com.apple.SoftwareUpdate, com.apple.commerce, com.apple.appstore,
+#            com.apple.applicationaccess or com.apple.ManagedClient (identifier or payload type), OR an MDM
+#            enrollment ("MDM enrollment: Yes", which also covers Declarative Device Management that the
+#            profile listing cannot show)
+#   none     ONLY when the listing is exactly the empty-listing sentence AND the enrollment reads "No"
+#   unknown  everything else (tool failure, empty or unrecognised output, a listing with other profiles we
+#            cannot classify, unreadable enrollment). Callers write nothing for managed or unknown.
+# Mac-confirm: the empty-listing wording and the "profiles show" payload grammar (see interface sec 12).
+wsp_profile_state() { local _p _m
+  WSP_PROF=unknown
+  wsp_run _p profiles show -type configuration
+  [ "$WSP_RC" -eq 0 ] && [ -n "$_p" ] || return 0
+  _m=$(wsp_mdm_state) || _m=unknown
+  if wsp_any_line_re "$_p" 'com\.apple\.(SoftwareUpdate|commerce|appstore|applicationaccess|ManagedClient)'; then WSP_PROF=managed; return 0; fi
+  if [ "$_m" = yes ]; then WSP_PROF=managed; return 0; fi
+  [ "$_m" = no ] || return 0
+  case "$_p" in
+    "There are no configuration profiles installed"|"There are no configuration profiles installed in the system domain") WSP_PROF=none;;
+  esac; }
+# --- user preferences (d12, module 2; d13 hardening) --------------------------------------------------
+# The list comes ONLY from the operator file $WSP_SESSION_DIR/user-prefs.conf (root-owned, trust-checked like the
+# session policy); there is no built-in list. One entry per line:  id|domain|key|type|value
+#   id      [a-z0-9-], 1-32, unique        domain, key   [A-Za-z0-9._-], 1-100; the first char of a domain is alphanumeric, of a key alphanumeric or an underscore (d14; any number of leading underscores passes this grammar, the fixed key table then refuses every key that is not listed); (domain,key) unique
+#   type    bool | int | string            value  bool: true|false; int: 0 or -?[1-9][0-9]{0,8} (no leading zeros, no -0);
+#                                                 string: [A-Za-z0-9._+-] 1-64, no leading '-'
+# A syntax error anywhere rejects the WHOLE file (nothing is changed). A syntactically valid entry whose (domain,key) is not
+# in the fixed table below is refused on its own (BLOCKED_POLICY). The table is a LIBRARY CONSTANT: the operator file can
+# only choose a subset of it (an entry outside the table is refused), it can never add a domain or a key.
+# d13 (reviewer S2): the table is domain -> exact key names. Deliberately NOT in it: any key of NSGlobalDomain that is not
+# listed, the com.apple.dock wvous-* hot corners, *-immutable lock-ins, com.apple.finder FXRemoveOldTrashItems (auto-deletes
+# the Trash) and WarnOnEmptyTrash, NSDocumentSaveNewDocumentsToCloud and AppleKeyboardUIMode.
+wsp_pref_domain_ok() { # DOMAIN: 0 if the domain has a row in the table
+  case "$1" in
+    NSGlobalDomain|com.apple.dock|com.apple.finder|com.apple.AppleMultitouchTrackpad|com.apple.driver.AppleBluetoothMultitouch.trackpad|com.apple.desktopservices|com.apple.menuextra.clock) return 0;;
+  esac
+  return 1; }
+wsp_pref_key_ok() { # DOMAIN KEY: 0 only if the table lists this exact key for this domain
+  case "$1" in
+    NSGlobalDomain) case "$2" in
+      AppleShowScrollBars|AppleShowAllExtensions|NSAutomaticSpellingCorrectionEnabled|NSAutomaticCapitalizationEnabled|NSAutomaticPeriodSubstitutionEnabled|NSAutomaticQuoteSubstitutionEnabled|NSAutomaticDashSubstitutionEnabled|com.apple.swipescrolldirection) return 0;; esac;;
+    com.apple.dock) case "$2" in
+      autohide|autohide-delay|autohide-time-modifier|tilesize|largesize|magnification|orientation|show-recents|minimize-to-application|mru-spaces|launchanim|show-process-indicators) return 0;; esac;;
+    com.apple.finder) case "$2" in
+      ShowPathbar|ShowStatusBar|AppleShowAllFiles|FXPreferredViewStyle|FXEnableExtensionChangeWarning|_FXShowPosixPathInTitle|FXDefaultSearchScope|NewWindowTarget) return 0;; esac;;
+    com.apple.AppleMultitouchTrackpad|com.apple.driver.AppleBluetoothMultitouch.trackpad) case "$2" in
+      Clicking|TrackpadRightClick|TrackpadThreeFingerDrag|Dragging) return 0;; esac;;
+    com.apple.desktopservices) case "$2" in
+      DSDontWriteNetworkStores|DSDontWriteUSBStores) return 0;; esac;;
+    com.apple.menuextra.clock) case "$2" in
+      ShowDate|ShowDayOfWeek|Show24Hour|ShowAMPM|IsAnalog|FlashDateSeparators) return 0;; esac;;
+  esac
+  return 1; }
+wsp_prefs_load() { # sets WSP_PREF_ENTRIES (newline separated "id|domain|key|type|value") and WSP_PREF_WHY; 0 only if valid and non-empty
+  local _f _l _id _dom _key _typ _val _r1 _r2 _r3 _r4 _n _seen _seenk _re _rek
+  WSP_PREF_ENTRIES=""; WSP_PREF_WHY=""; _n=0; _seen=" "; _seenk=" "
+  _f="$WSP_SESSION_DIR/user-prefs.conf"
+  if [ ! -e "$_f" ] && [ ! -L "$_f" ]; then WSP_PREF_WHY="user preference list not configured"; return 1; fi
+  wsp_check_file "$_f" || { WSP_PREF_WHY="preference list file missing or untrusted"; return 1; }
+  [ "$(wsp_stat_owner "$_f")" = root ] || [ "$WSP_FIXTURE" -eq 1 ] || { WSP_PREF_WHY="preference list file not owned by root"; return 1; }
+  _re='^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$'
+  _rek='^[A-Za-z0-9_][A-Za-z0-9._-]{0,99}$'   # d14 (reviewer S4, text fixed in d15 = Q5): a KEY may start with an underscore (_FXShowPosixPathInTitle); this grammar allows any number of them and the fixed table refuses unlisted keys; a domain may not
+  while IFS= read -r _l || [ -n "$_l" ]; do
+    case "$_l" in ''|'#'*) continue;; esac
+    _r1=${_l#*|}; [ "$_r1" != "$_l" ] || { WSP_PREF_WHY="preference list malformed"; return 1; }
+    _r2=${_r1#*|}; [ "$_r2" != "$_r1" ] || { WSP_PREF_WHY="preference list malformed"; return 1; }
+    _r3=${_r2#*|}; [ "$_r3" != "$_r2" ] || { WSP_PREF_WHY="preference list malformed"; return 1; }
+    _r4=${_r3#*|}; [ "$_r4" != "$_r3" ] || { WSP_PREF_WHY="preference list malformed"; return 1; }
+    case "$_r4" in *'|'*) WSP_PREF_WHY="preference list malformed"; return 1;; esac
+    _id=${_l%%|*}; _dom=${_r1%%|*}; _key=${_r2%%|*}; _typ=${_r3%%|*}; _val=$_r4
+    wsp_re "$_id" '^[a-z0-9][a-z0-9-]{0,31}$' || { WSP_PREF_WHY="preference list malformed"; return 1; }
+    case "$_seen" in *" $_id "*) WSP_PREF_WHY="preference list malformed"; return 1;; esac
+    wsp_re "$_dom" "$_re" || { WSP_PREF_WHY="preference list malformed"; return 1; }
+    wsp_re "$_key" "$_rek" || { WSP_PREF_WHY="preference list malformed"; return 1; }
+    case "$_dom$_key" in *..*) WSP_PREF_WHY="preference list malformed"; return 1;; esac
+    case "$_seenk" in *" $_dom|$_key "*) WSP_PREF_WHY="preference list malformed"; return 1;; esac
+    case "$_typ" in
+      bool) case "$_val" in true|false) ;; *) WSP_PREF_WHY="preference list malformed"; return 1;; esac;;
+      int) wsp_re "$_val" '^(0|-?[1-9][0-9]{0,8})$' || { WSP_PREF_WHY="preference list malformed"; return 1; };;
+      string) wsp_re "$_val" '^[A-Za-z0-9._+][A-Za-z0-9._+-]{0,63}$' || { WSP_PREF_WHY="preference list malformed"; return 1; };;
+      *) WSP_PREF_WHY="preference list malformed"; return 1;;
+    esac
+    _n=$((_n+1)); [ "$_n" -le 64 ] || { WSP_PREF_WHY="preference list malformed"; return 1; }
+    _seen="$_seen$_id "; _seenk="$_seenk$_dom|$_key "
+    WSP_PREF_ENTRIES="$WSP_PREF_ENTRIES$_id|$_dom|$_key|$_typ|$_val$WSP_NL"
+  done < "$_f" || { WSP_PREF_WHY="preference list unreadable"; return 1; }
+  [ "$_n" -gt 0 ] || { WSP_PREF_WHY="user preference list is empty"; return 1; }
+  return 0
+}
+# wsp_prefs_summary (d14, reviewer S3): after a successful wsp_prefs_load, sets WSP_PREF_SUMMARY = "N entries (A in the suite table, R refused) for the
+# domains: d1 d2". Shown before the typed APPLY question, so the user does not type APPLY for a list that is then refused. Domains come
+# from the validated grammar only (no free text). Reads nothing but WSP_PREF_ENTRIES.
+wsp_prefs_summary() { local _e _r _dom _key _n=0 _a=0 _doms=" " _dl="" _ifs
+  _ifs=$IFS; set -f; IFS=$WSP_NL
+  for _e in $WSP_PREF_ENTRIES; do
+    _r=${_e#*|}; _dom=${_r%%|*}; _r=${_r#*|}; _key=${_r%%|*}
+    _n=$((_n+1))
+    if wsp_pref_domain_ok "$_dom" && wsp_pref_key_ok "$_dom" "$_key"; then _a=$((_a+1)); fi
+    case "$_doms" in *" $_dom "*) ;; *) _doms="$_doms$_dom "; _dl="$_dl $_dom";; esac
+  done
+  IFS=$_ifs; set +f
+  WSP_PREF_SUMMARY="$_n entries ($_a in the suite table, $((_n-_a)) refused) for the domains:$_dl"; }
+# wsp_prefs_plist_name DOMAIN: prints the plist base name (NSGlobalDomain is stored in .GlobalPreferences)
+wsp_prefs_plist_name() { if [ "$1" = NSGlobalDomain ]; then printf '.GlobalPreferences'; else printf '%s' "$1"; fi; }
+# wsp_def_run OUTVAR defaults-args...: the defaults tool through wsp_run; with WSP_UPREF_AS set it runs as that user
+# (sudo -n -u USER), so an offline write is done with the target user's own rights, never root's.
+wsp_def_run() { local _o=$1; shift
+  if [ -n "${WSP_UPREF_AS:-}" ]; then wsp_run "$_o" sudo -n -u "$WSP_UPREF_AS" defaults "$@"; else wsp_run "$_o" defaults "$@"; fi; }
+# wsp_upref_read DOMARG KEY TYPE: sets WSP_UPREF = the value (bool as true/false) | unset | other | unknown.
+#   unset    exit 1 + empty stdout + not-found class + valid capture (same proof as wsp_pref_read)
+#   other    present, but its stored type is not the wanted one, or the value is outside the grammar: never overwritten
+#   unknown  anything else (tool failure, bad framing, multi-line)
+wsp_upref_read() { local _v _t
+  WSP_UPREF=unknown
+  wsp_def_run _v read "$1" "$2"
+  WSP_UPREF_RC=$WSP_RC; WSP_UPREF_CLASS=$WSP_ERRCLASS
+  if [ "$WSP_RC" -ne 0 ]; then
+    if [ "$WSP_RC" -eq 1 ] && [ -z "$_v" ] && [ "$WSP_ERRCLASS" = not-found ] && [ "$WSP_CAPTURE" = ok ]; then WSP_UPREF=unset; fi
+    return 0
+  fi
+  wsp_one_line "$_v" || return 0
+  wsp_def_run _t read-type "$1" "$2"
+  [ "$WSP_RC" -eq 0 ] && wsp_one_line "$_t" || return 0
+  case "$_t" in "Type is boolean"|"Type is integer"|"Type is string"|"Type is float"|"Type is data"|"Type is array"|"Type is dictionary"|"Type is date") ;; *) return 0;; esac
+  WSP_UPREF=other
+  case "$3:$_t" in
+    bool:"Type is boolean") case "$_v" in 1) WSP_UPREF=true;; 0) WSP_UPREF=false;; esac;;
+    int:"Type is integer") if wsp_re "$_v" '^(0|-?[1-9][0-9]{0,8})$'; then WSP_UPREF=$_v; fi;;
+    string:"Type is string") if wsp_re "$_v" '^[A-Za-z0-9._+][A-Za-z0-9._+-]{0,63}$'; then WSP_UPREF=$_v; fi;;
+  esac; }
+# wsp_prefs_profile_load: one read of the profile listing per run: WSP_PTEXT (the listing, or empty) and WSP_PBASE
+# (wsp_profile_state: none | managed | unknown).
+wsp_prefs_profile_load() { WSP_PTEXT=""
+  wsp_profile_state; WSP_PBASE=$WSP_PROF
+  wsp_run WSP_PTEXT profiles show -type configuration
+  [ "$WSP_RC" -eq 0 ] || WSP_PTEXT=""; }
+# wsp_prefs_state DOMAIN: sets WSP_PSTATE = managed | none | unknown. managed when the base state is managed, or the
+# profile listing names this domain (or NSGlobalDomain/GlobalPreferences for the global domain) or a custom-settings /
+# MCX payload; none only when the base state is none.
+wsp_prefs_state() { local _e _rc _bs='\'
+  WSP_PSTATE=$WSP_PBASE
+  [ "$WSP_PSTATE" = managed ] && return 0
+  if [ "$1" = NSGlobalDomain ]; then _e='NSGlobalDomain|GlobalPreferences'; else _e=${1//./$_bs.}; fi
+  wsp_any_line_re "$WSP_PTEXT" "$_e|com\\.apple\\.(mcx|MCX|ManagedClient)"; _rc=$?
+  if [ "$_rc" -eq 0 ]; then WSP_PSTATE=managed; elif [ "$_rc" -ne 1 ]; then WSP_PSTATE=unknown; fi
+  return 0; }
+# wsp_user_in_who USER TEXT: 0 if a line of the "who" listing starts with exactly USER followed by white space.
+wsp_user_in_who() { local _l _ifs _r=1; _ifs=$IFS; set -f; IFS=$WSP_NL
+  for _l in $2; do case "$_l" in "$1 "*|"$1"$'\t'*) _r=0; break;; esac; done
+  IFS=$_ifs; set +f; return "$_r"; }
+# wsp_user_uid USER: prints the numeric UniqueID only for exit 0 + one "UniqueID: <digits>" line (1-10 digits); else prints nothing, returns 1.
+wsp_user_uid() { local _u _v
+  wsp_run _u dscl . -read "/Users/$1" UniqueID
+  [ "$WSP_RC" -eq 0 ] && [ "$WSP_CAPTURE" = ok ] && wsp_one_line "$_u" || return 1
+  _v=$(wsp_field "$_u" UniqueID:) || return 1
+  wsp_re "$_v" '^[0-9]{1,10}$' || return 1
+  printf '%s' "$_v"; }
+# wsp_login_state USER UID (d13, reviewer S3/S4): sets WSP_LOGIN = idle | session | process | unknown. Read fresh at every call
+# (the offline module calls it once per target user, inside the per-user loop). Every reader is checked and fails closed:
+#   unknown  who failed, the console user is unreadable, or the process list could not be read and validated
+#   session  USER is the console user or a "who" line starts with USER
+#   process  a process of the target UID exists. The list is "ps -axo uid=": every line must be a bare number, and at least
+#            one process of UID 0 must be visible (a listing that cannot see root's processes proves nothing about others).
+#   idle     none of the above
+wsp_login_state() { local _w="" _c="" _p="" _l _ifs _root=0 _hit=0
+  WSP_LOGIN=unknown
+  wsp_run _w who
+  [ "$WSP_RC" -eq 0 ] && [ "$WSP_CAPTURE" = ok ] || return 0
+  _c=$(wsp_read_console) || return 0
+  if [ "$_c" = "$1" ] || wsp_user_in_who "$1" "$_w"; then WSP_LOGIN=session; return 0; fi
+  wsp_run _p ps -axo uid=
+  [ "$WSP_RC" -eq 0 ] && [ "$WSP_CAPTURE" = ok ] && [ -n "$_p" ] || return 0
+  _ifs=$IFS; set -f; IFS=$WSP_NL
+  for _l in $_p; do
+    wsp_re "$_l" '^ *[0-9]{1,10} *$' || { IFS=$_ifs; set +f; return 0; }
+    _l=${_l# }; while [ "${_l# }" != "$_l" ]; do _l=${_l# }; done
+    _l=${_l% }; while [ "${_l% }" != "$_l" ]; do _l=${_l% }; done
+    [ "$_l" = 0 ] && _root=1
+    [ "$_l" = "$2" ] && _hit=1
+  done
+  IFS=$_ifs; set +f
+  [ "$_root" -eq 1 ] || return 0
+  if [ "$_hit" -eq 1 ]; then WSP_LOGIN=process; else WSP_LOGIN=idle; fi
+  return 0; }
+# wsp_prefs_mcx DOMAIN USER (d13, reviewer S2): sets WSP_MCX = managed | none | unknown from the files themselves, which are
+# world-readable and need no profile tool:  $WSP_ROOT/Library/Managed Preferences/<plist>.plist (global) and
+# .../Managed Preferences/<USER>/<plist>.plist (per user). A file, directory or symlink with that name = managed. none only when
+# the folder is absent, or is a real readable directory without such an entry. A folder or per-user folder that exists but is a
+# symlink, a plain file or not readable/searchable, or an invalid USER, is unknown.
+wsp_prefs_mcx() { local _mp="$WSP_ROOT/Library/Managed Preferences" _pn _d _f
+  WSP_MCX=unknown
+  wsp_valid_account "${2:-}" || return 0
+  _pn=$(wsp_prefs_plist_name "$1") || return 0
+  [ -n "$_pn" ] || return 0
+  [ -L "$_mp" ] && return 0
+  if [ ! -e "$_mp" ]; then WSP_MCX=none; return 0; fi
+  [ -d "$_mp" ] && [ -r "$_mp" ] && [ -x "$_mp" ] || return 0
+  for _d in "$_mp" "$_mp/$2"; do
+    if [ "$_d" != "$_mp" ]; then
+      [ -L "$_d" ] && return 0
+      [ -e "$_d" ] || continue
+      [ -d "$_d" ] && [ -r "$_d" ] && [ -x "$_d" ] || return 0
+    fi
+    _f="$_d/$_pn.plist"
+    if [ -e "$_f" ] || [ -L "$_f" ]; then WSP_MCX=managed; return 0; fi
+  done
+  WSP_MCX=none; return 0; }
+# wsp_plutil_as OUTVAR plutil-args...: plutil through wsp_run AS the target user (sudo -n -u USER), never as root; refuses when
+# no target user is set. Callers pass "-convert xml1 -o - FILE" (-o - keeps the file untouched: without -o plutil rewrites in place).
+wsp_plutil_as() { local _o=$1; shift
+  if [ -z "${WSP_UPREF_AS:-}" ]; then WSP_RC=255; WSP_CAPTURE=usage; WSP_ERRCLASS=other; return 1; fi
+  wsp_run "$_o" sudo -n -u "$WSP_UPREF_AS" plutil "$@"; }
+# wsp_plist_has XML KEY TYPE VALUE (d13, reviewer S5): 0 only if the xml1 text has EXACTLY ONE top-level (one TAB indent) line
+# "<key>KEY</key>" and the very next line is the typed element for VALUE: <true/>, <false/>, <integer>N</integer> or
+# <string>S</string> (values are grammar-limited, so no XML escapes exist). Typed: an <integer> where a string is wanted, a
+# <true/> where an integer is wanted, or a nested key of the same name never matches. 1 = no or wrong match, 2 = bad arguments.
+wsp_plist_has() { local _l _ifs _tab=$'\t' _st=0 _n=0 _ok=1 _want
+  case "$3" in
+    bool) case "$4" in true) _want='<true/>';; false) _want='<false/>';; *) return 2;; esac;;
+    int) wsp_re "$4" '^(0|-?[1-9][0-9]{0,8})$' || return 2; _want="<integer>$4</integer>";;
+    string) wsp_re "$4" '^[A-Za-z0-9._+][A-Za-z0-9._+-]{0,63}$' || return 2; _want="<string>$4</string>";;
+    *) return 2;;
+  esac
+  wsp_re "$2" '^[A-Za-z0-9_][A-Za-z0-9._-]{0,99}$' || return 2
+  _ifs=$IFS; set -f; IFS=$WSP_NL
+  for _l in $1; do
+    if [ "$_st" -eq 1 ]; then _st=0; if [ "$_l" = "$_tab$_want" ]; then _ok=0; else _ok=1; fi; continue; fi
+    if [ "$_l" = "$_tab<key>$2</key>" ]; then _n=$((_n+1)); _st=1; fi
+  done
+  IFS=$_ifs; set +f
+  [ "$_n" -eq 1 ] && [ "$_ok" -eq 0 ]; }
+# wsp_backup_reuse PLIST ROOT (d15, owner Q4): first-login mode only. ONE fixed backup folder ROOT/firstlogin-original (mode 700) holds the
+# pre-change original of every plist the first-login run touches, whatever the number of tries. The first time a plist is touched its original
+# is copied (cp -p to a temp name in that folder, compared with cmp, then moved into place; or an ABSENT marker for a missing file); every
+# later try REUSES that original and never overwrites it, so the original pre-change state survives a failed first run, and repeated failures
+# create no new folder. Sets WSP_BACKUP_DIR (the fixed folder) and WSP_BACKUP_NEW (1 = copied now, 0 = reused). Refuses: a symlink plist, a
+# symlinked or non-directory root or folder, an existing original that is a link or not a regular file, a failed or unequal copy.
+wsp_backup_reuse() {
+  local _p=$1 _root=$2 _d _n=${1##*/} _t
+  WSP_BACKUP_DIR=""; WSP_BACKUP_NEW=0
+  [ -L "$_p" ] && return 1
+  case "$_root" in /*) ;; *) return 1;; esac
+  [ -L "$_root" ] && return 1
+  mkdir -p "$_root" || return 1
+  [ -d "$_root" ] && [ ! -L "$_root" ] || return 1
+  chmod 700 "$_root" || return 1
+  _d="$_root/firstlogin-original"
+  [ -L "$_d" ] && return 1
+  [ -e "$_d" ] || mkdir -m 700 "$_d" || return 1
+  [ -d "$_d" ] && [ ! -L "$_d" ] || return 1
+  chmod 700 "$_d" || return 1
+  if [ -L "$_d/$_n" ] || [ -L "$_d/$_n.ABSENT" ]; then return 1; fi
+  if [ -e "$_d/$_n" ] || [ -e "$_d/$_n.ABSENT" ]; then
+    if [ -e "$_d/$_n" ]; then [ -f "$_d/$_n" ] || return 1; else [ -f "$_d/$_n.ABSENT" ] || return 1; fi
+    WSP_BACKUP_DIR=$_d; return 0
+  fi
+  if [ -e "$_p" ]; then
+    [ -f "$_p" ] || return 1
+    _t=$(mktemp "$_d/.new.XXXXXX") || return 1
+    if ! cp -p "$_p" "$_t" || ! cmp -s "$_p" "$_t" || ! mv "$_t" "$_d/$_n"; then rm -f "$_t"; return 1; fi
+  else
+    printf 'ABSENT %s\n' "$_n" > "$_d/$_n.ABSENT" || { rm -f "$_d/$_n.ABSENT"; return 1; }
+  fi
+  WSP_BACKUP_DIR=$_d; WSP_BACKUP_NEW=1
+  return 0
+}
+# wsp_backup_move PATH [ROOT] (d15, module 4): backup by MOVING a whole existing item (file or folder, never a symlink) into a fresh unique
+# backup folder (mktemp -d, mode 700, default root $WSP_BASE/backup) under its own name. 0 only if afterwards the item is gone from PATH and present in
+# the backup folder (a rename keeps every byte, owner and mode; a cross-device move is a copy and delete, and the same checks apply). Sets
+# WSP_BACKUP_DIR (full path). A failed move removes only the EMPTY folder it made (rmdir), never data.
+wsp_backup_move() {
+  local _p=$1 _root _t _bd _n=${1##*/}
+  WSP_BACKUP_DIR=""
+  [ -L "$_p" ] && return 1
+  [ -e "$_p" ] || return 1
+  case "$_n" in ''|.|..) return 1;; esac
+  _root="${2:-$WSP_BASE/backup}"
+  [ -L "$_root" ] && return 1
+  mkdir -p "$_root" || return 1
+  [ -d "$_root" ] && [ ! -L "$_root" ] || return 1
+  chmod 700 "$_root" || return 1
+  _t=$(date +%Y%m%d%H%M%S) || return 1
+  _bd=$(mktemp -d "$_root/$_t.XXXXXX") || return 1
+  chmod 700 "$_bd" || { rmdir "$_bd"; return 1; }
+  if ! mv "$_p" "$_bd/$_n"; then rmdir "$_bd" 2>/dev/null; return 1; fi
+  [ ! -e "$_p" ] && [ ! -L "$_p" ] || return 1
+  [ -e "$_bd/$_n" ] || [ -L "$_bd/$_n" ] || return 1
+  WSP_BACKUP_DIR=$_bd
+  return 0
+}
+# wsp_rename_nofollow SRC DST (d15 B-1): place SRC at DST only if NOTHING exists at DST, and never follow a link at DST.
+# DST is in a world-writable sticky folder (/Users/Shared), so a local user can plant DST (a symlink, a dangling symlink, a symlink to a folder,
+# a folder) at any moment. mv alone is not enough: mv -h (macOS) / mv -T (GNU) stop the "move INTO the folder a link points to" case, but a
+# pure rename still REPLACES a planted symlink or file, and macOS mv -h still moves INTO a planted real folder. So the name is claimed atomically:
+#   a file:   link(2) via "link SRC DST" (no options, no directory logic): fails with EEXIST if DST exists in ANY form, never follows DST;
+#             then the SRC name is removed (the inode, owner and mode are the staged ones).
+#   a folder: mkdir(2) of DST, mode 0700 (same atomic no-clobber rule). The claim is root-owned in a sticky folder, so no other user can remove,
+#             rename or write into it. Every entry of SRC is renamed into it (mv -h on macOS, mv -T elsewhere: never follows a target link),
+#             the claim gets SRC's owner, group and mode LAST (nothing is visible before it is complete), then the empty SRC is removed.
+# Returns 0 when placed; 2 when DST already existed (refused, nothing written); 1 on any other failure, with nothing left at DST that this
+# call created (a partly filled claim is emptied back into SRC and removed); 3 (d16, S-9) when that undo itself failed, so a root-owned 0700
+# claim (possibly partly filled) REMAINS at DST: the caller must not say "nothing was placed".
+# d16 (S-8): for a file, once link(2) succeeded the item IS placed; a failed removal of the SRC name no longer returns 1 (the staging folder
+# is removed by the caller anyway), so a placed item is never reported as "nothing was placed".
+# d16 (S-10): cross-volume SRC/DST fails closed for FILES only (link: EXDEV; no copy fallback). FOLDER entries are moved with mv, which copies
+# across volumes into the root-only claim (still no-clobber at DST, still never through a link). Finder metadata on the top folder itself is
+# not carried over (contents are).
+wsp_rename_nofollow() {
+  local _s=$1 _d=$2 _c _n _f=-T _o _g _m _r=0
+  if [ "$WSP_FIXTURE" -ne 1 ] && [ -d /System/Library/CoreServices ]; then _f=-h; fi   # macOS mv: -h; GNU (fixture): -T
+  [ -L "$_s" ] && return 1
+  if [ -e "$_d" ] || [ -L "$_d" ]; then return 2; fi
+  if [ -f "$_s" ]; then
+    link "$_s" "$_d" || { if [ -e "$_d" ] || [ -L "$_d" ]; then return 2; fi; return 1; }
+    rm -f "$_s" || :   # S-8: the item is placed; a leftover SRC name stays in the staging folder, which the caller removes
+    return 0
+  fi
+  [ -d "$_s" ] || return 1
+  _o=$(wsp_stat_owner "$_s") && _g=$(wsp_stat_group "$_s") && _m=$(wsp_stat_mode "$_s") || return 1
+  mkdir -m 700 "$_d" || { if [ -e "$_d" ] || [ -L "$_d" ]; then return 2; fi; return 1; }
+  [ -d "$_d" ] && [ ! -L "$_d" ] || return 1
+  for _c in "$_s"/* "$_s"/.[!.]* "$_s"/..?*; do
+    [ -e "$_c" ] || [ -L "$_c" ] || continue
+    _n=${_c##*/}
+    mv "$_f" "$_c" "$_d/$_n" || { _r=1; break; }
+  done
+  if [ "$_r" -eq 0 ]; then chown -h "$_o:$_g" "$_d" && chmod "$_m" "$_d" && rmdir "$_s" && return 0; fi
+  for _c in "$_d"/* "$_d"/.[!.]* "$_d"/..?*; do
+    [ -e "$_c" ] || [ -L "$_c" ] || continue
+    _n=${_c##*/}
+    mv "$_f" "$_c" "$_s/$_n" || return 3
+  done
+  rmdir "$_d" || return 3
+  return 1
+}
+# wsp_backup_owner_marker PLIST (d13, reviewer S12): offline only (WSP_UPREF_AS set). Writes OWNER.txt next to the backup copy
+# ("OWNER <user> MODE <mode|absent> FILE <name>") so a restore months later does not depend on the report. On failure the
+# just-made backup directory is discarded and 1 is returned (the caller refuses the write).
+wsp_backup_owner_marker() { local _m=absent _n=${1##*/}
+  [ -n "${WSP_UPREF_AS:-}" ] || return 0
+  if [ -e "$1" ]; then _m=$(wsp_stat_mode "$1") || { wsp_backup_discard "$WSP_BACKUP_DIR"; return 1; }; fi
+  if ! { [ -n "$WSP_BACKUP_DIR" ] && printf 'OWNER %s MODE %s FILE %s\n' "$WSP_UPREF_AS" "$_m" "$_n" > "$WSP_BACKUP_DIR/OWNER.txt" && chmod 600 "$WSP_BACKUP_DIR/OWNER.txt"; }; then
+    wsp_backup_discard "$WSP_BACKUP_DIR"; return 1; fi
+  return 0; }
+# wsp_pref_entry ENTRY: the single per-entry pipeline shared by UserSpace-preferences (the user's own session) and
+# workstationadmin-mod-userprefs (offline home). Configuration is passed in globals set by the caller:
+#   WSP_PE_PLISTDIR  directory that holds the domain's plist (required)
+#   WSP_PE_DOMDIR    "" = pass the domain name to defaults (live session); else a directory: the domain argument becomes
+#                    DIR/<plist base name> (a path domain, offline)
+#   WSP_PE_BKROOT    "" = wsp_backup default; else the backup root
+#   WSP_PE_LABEL     prefix for the check name        WSP_PE_HOME  the caller's home (UserSpace only); the backup= field is reported as ~/<path under it>
+#   WSP_PE_USER      the target user's account name (d13: used for the per-user Managed Preferences folder; unset -> UNKNOWN)
+#   WSP_PE_UID / WSP_PE_FRESH   (d14, offline only) the target uid and a flag the module sets to 1 per user: the first write re-reads the login state
+# Order of refusals (each ends the entry; nothing is written): (domain,key) not in the suite table -> BLOCKED_POLICY;
+# a file under Managed Preferences (global or per user) -> BLOCKED_POLICY, folder unreadable -> UNKNOWN;
+# managed profile or MDM -> BLOCKED_POLICY; management state unknown -> UNKNOWN; value unreadable -> UNKNOWN; other stored type -> UNSUPPORTED.
+# Writes (apply mode only): one checked backup per plist and run, the identity re-check, then defaults write, then a typed
+# read-back; anything but an equal read-back is FAILED. Offline writes also verify the owner/mode of the written file.
+WSP_PE_KEYS=(); WSP_PE_PATHS=(); WSP_PE_REF=" "
+WSP_PE_UID=""; WSP_PE_FRESH=0   # d14 (S6): offline only; the module sets the target uid and FRESH=1 per user, the first write of that user clears it
+WSP_PE_BKREUSE=0   # d15 (owner Q4): 1 = first-login mode: ONE reused backup folder per backup root (wsp_backup_reuse), never one folder per try
+WSP_BACKUP_NEW=1   # set by wsp_backup_reuse: 0 when an existing first-login original was reused (nothing was copied, so there is nothing to re-compare)
+wsp_pe_find() { local _i=0; WSP_PE_BKP=""
+  while [ "$_i" -lt "${#WSP_PE_KEYS[@]}" ]; do
+    if [ "${WSP_PE_KEYS[$_i]}" = "$1" ]; then WSP_PE_BKP=${WSP_PE_PATHS[$_i]}; return 0; fi
+    _i=$((_i+1)); done
+  return 1; }
+wsp_pref_entry() {
+  local _e=$1 _id _r _dom _key _typ _val _pn _pl _da _lab _have _k _bkp _bkn _show _rc _o _ow _md _x="" _s="" _try _dk _bkok
+  _id=${_e%%|*}; _r=${_e#*|}; _dom=${_r%%|*}; _r=${_r#*|}; _key=${_r%%|*}; _r=${_r#*|}; _typ=${_r%%|*}; _val=${_r#*|}
+  _lab="${WSP_PE_LABEL:-}$_id"
+  if ! wsp_pref_domain_ok "$_dom"; then wsp_status BLOCKED_POLICY R21 "$_lab" "domain is not in the suite allowlist; nothing is changed" "$_val" "" record; return 0; fi
+  if ! wsp_pref_key_ok "$_dom" "$_key"; then wsp_status BLOCKED_POLICY R21 "$_lab" "key is not in the suite allowlist for this domain; nothing is changed" "$_val" "" record; return 0; fi
+  wsp_prefs_mcx "$_dom" "${WSP_PE_USER:-}"
+  case "$WSP_MCX" in
+    none) ;;
+    managed) wsp_status BLOCKED_POLICY R21 "$_lab" "a managed preference file for this domain exists under Managed Preferences; reported, never overridden" "$_val" "" record; return 0;;
+    *) wsp_status UNKNOWN R21 "$_lab" "Managed Preferences folder not readable or not classified; nothing is changed" "$_val" unknown record; return 0;;
+  esac
+  wsp_prefs_state "$_dom"
+  case "$WSP_PSTATE" in
+    none) ;;
+    managed) wsp_status BLOCKED_POLICY R21 "$_lab" "managed profile or MDM enrollment may control this domain; reported, never overridden" "$_val" "" record; return 0;;
+    *) wsp_status UNKNOWN R21 "$_lab" "management state unreadable or not classified; nothing is changed" "$_val" unknown record; return 0;;
+  esac
+  _pn=$(wsp_prefs_plist_name "$_dom") || { wsp_status UNKNOWN R21 "$_lab" "plist name unavailable; nothing is changed" "$_val" unknown record; return 0; }
+  _pl="$WSP_PE_PLISTDIR/$_pn.plist"
+  _da=$_dom; [ -n "${WSP_PE_DOMDIR:-}" ] && _da="$WSP_PE_DOMDIR/$_pn"
+  wsp_upref_read "$_da" "$_key" "$_typ"; _have=$WSP_UPREF
+  case "$_have" in
+    unknown) wsp_status UNKNOWN R21 "$_lab" "preference unreadable or not in the expected form; nothing is changed" "$_val" unknown stored-pref "$WSP_UPREF_RC" "$WSP_UPREF_CLASS"; return 0;;
+    other) wsp_status UNSUPPORTED R21 "$_lab" "stored value has another type or form; it is not overwritten" "$_val" other stored-pref; return 0;;
+  esac
+  if [ "$_have" = "$_val" ]; then wsp_status ALREADY_CORRECT R21 "$_lab" "stored value matches (stored value; the visible behaviour is a separate check)" "$_val" "$_have" stored-pref; return 0; fi
+  if [ "$WSP_MODE" != apply ]; then wsp_status PROPOSED R21 "$_lab" "would set (apply mode, after backup)" "$_val" "$_have" stored-pref; return 0; fi
+  _k="${WSP_PE_LABEL:-}$_pn"
+  case "$WSP_PE_REF" in *" $_k "*) wsp_status FAILED R21 "$_lab" "backup or identity check of this preference file failed earlier in this run; nothing written" "$_val" "$_have" stored-pref; return 0;; esac
+  if ! wsp_pe_find "$_k"; then
+    WSP_BACKUP_NEW=1
+    if [ "${WSP_PE_BKREUSE:-0}" -eq 1 ]; then _bkok=0; wsp_backup_reuse "$_pl" "${WSP_PE_BKROOT:-}" || _bkok=1   # d15 (Q4): first-login mode, one reused original
+    else _bkok=0; { wsp_backup "$_pl" "${WSP_PE_BKROOT:-}" && wsp_backup_owner_marker "$_pl"; } || _bkok=1; fi
+    if [ "$_bkok" -ne 0 ]; then WSP_PE_REF="$WSP_PE_REF$_k "; wsp_status FAILED R21 "$_lab" "backup of the preference file failed or was refused; nothing written" "$_val" "$_have" stored-pref; return 0; fi
+    WSP_PE_KEYS[${#WSP_PE_KEYS[@]}]=$_k; WSP_PE_PATHS[${#WSP_PE_PATHS[@]}]=$WSP_BACKUP_DIR
+    if [ "$WSP_BACKUP_NEW" -eq 1 ] && ! wsp_backup_check "$_pl"; then WSP_PE_REF="$WSP_PE_REF$_k "; wsp_status FAILED R21 "$_lab" "the preference file changed between backup and write; nothing written" "$_val" "$_have" stored-pref; return 0; fi
+    wsp_pe_find "$_k"
+  fi
+  _bkp=$WSP_PE_BKP; _bkn=${_bkp##*/}; _show=$_bkp   # d13: offline = the full absolute path; own session = "~/<path under home>" (the account name never appears)
+  if [ -n "${WSP_PE_HOME:-}" ]; then
+    case "$_bkp" in "$WSP_PE_HOME"/?*) _show="~${_bkp#"$WSP_PE_HOME"}";; *) _show="";; esac
+  fi
+  # d14 (reviewer S6, offline only): right before the FIRST write for this user (after the checked backup and the identity re-check) the
+  # login state is read again (who, console user, process list), so the window of D5 shrinks to the few commands between this read and
+  # the write. Not idle, or any reader failing = nothing written for this entry. Later entries of the same user are not re-read: our own
+  # earlier write (or read) may leave a process of that uid (Mac item M15).
+  if [ -n "${WSP_UPREF_AS:-}" ] && [ "${WSP_PE_FRESH:-0}" -eq 1 ]; then
+    WSP_LOGIN=unknown
+    if [ -n "${WSP_PE_UID:-}" ] && [ -n "${WSP_PE_USER:-}" ]; then wsp_login_state "$WSP_PE_USER" "$WSP_PE_UID"; fi
+    if [ "$WSP_LOGIN" != idle ]; then
+      wsp_status BLOCKED_POLICY R21 "$_lab" "the login state of the target user changed or could not be read right before the first write; nothing written (backup $_bkn)" "$_val" "$_have" stored-pref "" "" "$_show"; return 0; fi
+    WSP_PE_FRESH=0
+  fi
+  case "$_typ" in
+    bool) wsp_def_run _o write "$_da" "$_key" -bool "$_val";;
+    int) wsp_def_run _o write "$_da" "$_key" -int "$_val";;
+    *) wsp_def_run _o write "$_da" "$_key" -string "$_val";;
+  esac
+  _rc=$WSP_RC
+  wsp_upref_read "$_da" "$_key" "$_typ"
+  if [ "$_rc" -ne 0 ] || [ "$WSP_UPREF" != "$_val" ]; then
+    wsp_status FAILED R21 "$_lab" "write failed or read-back mismatch; backup $_bkn" "$_val" "$WSP_UPREF" stored-pref "$_rc" "" "$_show"; return 0; fi
+  if [ -n "${WSP_UPREF_AS:-}" ]; then
+    _ow=$(wsp_stat_owner "$_pl") || _ow=""; _md=$(wsp_stat_mode "$_pl") || _md=""
+    if [ -L "$_pl" ] || [ ! -f "$_pl" ] || [ "$_ow" != "$WSP_UPREF_AS" ] || ! wsp_mode_not_gw "$_md"; then
+      wsp_status FAILED R21 "$_lab" "written file is not a regular file owned by the target user and not group/other writable; backup $_bkn" "$_val" "$WSP_UPREF" stored-pref "" "" "$_show"; return 0; fi
+  fi
+  if [ -n "${WSP_UPREF_AS:-}" ]; then
+    # d13 (reviewer S5): the defaults read-back above goes through the same daemon that did the write, so offline the bytes
+    # on disk are checked as well, independently: plutil, as the target user, on the file itself, typed comparison.
+    # Owner decision: the file may be flushed a moment after the write returns, so the read is bounded-retried: at most 3 reads,
+    # 1 second apart (the sleep is a checked wsp_run, its status is ignored; no other loop, no unbounded wait).
+    _try=0; _dk=1
+    while [ "$_try" -lt 3 ]; do
+      _try=$((_try+1))
+      wsp_plutil_as _x -convert xml1 -o - "$_pl"
+      if [ "$WSP_RC" -eq 0 ] && [ "$WSP_CAPTURE" = ok ] && wsp_plist_has "$_x" "$_key" "$_typ" "$_val"; then _dk=0; break; fi
+      if [ "$_try" -lt 3 ]; then wsp_run _s sleep 1; fi
+    done
+    if [ "$_dk" -ne 0 ]; then
+      wsp_status FAILED R21 "$_lab" "the written value was not found, with the right type, in the file on disk (plutil, independent of the preference daemon); backup $_bkn" "$_val" "$WSP_UPREF" stored-pref "" "" "$_show"; return 0; fi
+  fi
+  wsp_status CHANGED_VERIFIED R21 "$_lab" "written and read back; backup $_bkn" "$_val" "$WSP_UPREF" stored-pref "" "" "$_show"
+  return 0
+}
+# ---- module 3 (d14): the first-login LaunchAgent ----------------------------------------------------------------------------
+# Root installs ONE LaunchAgent plist (/Library/LaunchAgents, root, 0644) and a root-owned, non-writable copy of UserSpace-preferences.txt
+# and this library (session folder bin/, 0444). At a listed user's FIRST GUI login launchd runs the copy once as that user in the user's own
+# session: "/bin/bash UserSpace-preferences.txt --mode apply --firstlogin". It applies only the operator's user-prefs.conf through the module-2
+# pipeline. Consent is NOT typed: it is the root-written record firstlogin-consent.conf, bound to the SHA-256 of user-prefs.conf and to the
+# exact USERS value; any mismatch = PENDING_CONSENT and zero writes. A per-user done marker in the user's own Application Support folder
+# makes every later login a no-op. Removal and rollback are a manual, documented record (interface section 13); nothing here removes anything.
+WSP_FL_LABEL_DEFAULT="com.example.workstationprovisioning.firstlogin"
+WSP_FL_BIN="$WSP_SESSION_DIR/bin"                                                   # fixture-prefixed path of the installed copies
+WSP_FL_PROG="/Library/Management/WorkstationProvisioning-Session/bin/UserSpace-preferences.txt"   # ON-DEVICE absolute path written into the plist
+WSP_FL_CONSENT="$WSP_SESSION_DIR/firstlogin-consent.conf"
+# wsp_fl_label_ok LABEL: 0 for a generic reverse-DNS label: 3 to 5 dot-separated parts of [a-z0-9-], first part starting with a letter,
+# at most 100 characters, never an Apple label (com.apple.*). The default is a generic example label; the operator sets FIRSTLOGIN_LABEL.
+wsp_fl_label_ok() {
+  [ "${#1}" -le 100 ] || return 1
+  wsp_re "$1" '^[a-z][a-z0-9-]{0,30}(\.[a-z0-9][a-z0-9-]{0,30}){2,4}$' || return 1
+  case "$1" in com.apple.*|apple.*) return 1;; esac
+  return 0; }
+# wsp_fl_label: prints the label (policy FIRSTLOGIN_LABEL, else the generic default when the line is ABSENT); returns 1 for a value that is set but invalid, empty or rejected (d15, Q2).
+wsp_fl_label() { local _l
+  _l=$(wsp_policy FIRSTLOGIN_LABEL) || { wsp_policy_has FIRSTLOGIN_LABEL && return 1; _l=$WSP_FL_LABEL_DEFAULT; }   # d15 (Q2): a line that exists but whose value is rejected refuses; only an absent line uses the default
+  wsp_fl_label_ok "$_l" || return 1
+  printf '%s' "$_l"; }
+# wsp_fl_plist_text LABEL: the exact plist text the installer writes and the checker compares (no other key can be present).
+# RunAtLoad runs it at load (a user's login); LimitLoadToSessionType Aqua = a GUI login only; no KeepAlive, no StartInterval, no WatchPaths.
+wsp_fl_plist_text() { local _t=$'\t'
+  printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' \
+    '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
+    '<plist version="1.0">' '<dict>' \
+    "$_t<key>Label</key>" "$_t<string>$1</string>" \
+    "$_t<key>ProgramArguments</key>" "$_t<array>" \
+    "$_t$_t<string>/bin/bash</string>" "$_t$_t<string>$WSP_FL_PROG</string>" "$_t$_t<string>--mode</string>" "$_t$_t<string>apply</string>" "$_t$_t<string>--firstlogin</string>" \
+    "$_t</array>" "$_t<key>RunAtLoad</key>" "$_t<true/>" "$_t<key>LimitLoadToSessionType</key>" "$_t<string>Aqua</string>" \
+    '</dict>' '</plist>'; }
+# wsp_fl_consent_text SHA USERS: the exact text of the root-written consent record.
+wsp_fl_consent_text() { printf 'FIRSTLOGIN_CONSENT_RECORD=1\nPREFS_SHA256=%s\nUSERS=%s\n' "$1" "$2"; }
+# wsp_sha256_file FILE: prints the SHA-256 only for exit 0 + exactly "<64 hex>  FILE"; else prints nothing, returns 1.
+wsp_sha256_file() { local _o _h
+  wsp_run _o shasum -a 256 "$1"
+  [ "$WSP_RC" -eq 0 ] && [ "$WSP_CAPTURE" = ok ] || return 1
+  _h=${_o%%  *}
+  wsp_re "$_h" '^[0-9a-f]{64}$' || return 1
+  [ "$_o" = "$_h  $1" ] || return 1
+  printf '%s' "$_h"; }
+# wsp_fl_owner_ok OWNER: root (fixture: also the owner of the fixture root, the account that created the fixture).
+wsp_fl_owner_ok() { local _r
+  [ "$1" = root ] && return 0
+  [ "$WSP_FIXTURE" -eq 1 ] || return 1
+  _r=$(wsp_stat_owner "$WSP_ROOT") || return 1
+  [ "$1" = "$_r" ]; }
+# wsp_fl_text_is FILE TEXT: 0 if the first 4096 bytes of FILE equal TEXT (trailing newlines ignored on both sides).
+wsp_fl_text_is() { local _c
+  _c=$(head -c 4096 "$1") || return 1
+  [ "$_c" = "$2" ]; }
+# wsp_fl_consent_state: sets WSP_FLC = ok | missing | stale | unknown | bad for the CURRENT user-prefs.conf and session USERS.
+#   missing  no record (not even a symlink)     bad      symlink, not a regular file, not owned by root, group/other writable, ACL, untrusted folder
+#   unknown  the hash tool, the policy or the file could not be read     stale  readable record whose text differs from the one built from the current files
+#   ok       the record equals wsp_fl_consent_text(sha256 of user-prefs.conf, USERS) exactly
+wsp_fl_consent_state() { local _f="$WSP_FL_CONSENT" _o _sha _us _exp
+  WSP_FLC=bad
+  if [ ! -e "$_f" ] && [ ! -L "$_f" ]; then WSP_FLC=missing; return 0; fi
+  wsp_check_file "$_f" || return 0
+  _o=$(wsp_stat_owner "$_f") || return 0
+  wsp_fl_owner_ok "$_o" || return 0
+  WSP_FLC=unknown
+  _sha=$(wsp_sha256_file "$WSP_SESSION_DIR/user-prefs.conf") || return 0
+  _us=$(wsp_session_policy USERS) || return 0
+  _exp=$(wsp_fl_consent_text "$_sha" "$_us")
+  if wsp_fl_text_is "$_f" "$_exp"; then WSP_FLC=ok; else WSP_FLC=stale; fi
+  return 0; }
+# wsp_fl_marker_state DIR USER: sets WSP_FLM = none | done | bad for DIR/firstlogin.done: none = absent; done = a regular file owned by USER;
+# bad = a symlink, another kind of object or another owner (the caller refuses; it never treats a bad marker as absent).
+wsp_fl_marker_state() { local _m="$1/firstlogin.done" _o
+  WSP_FLM=bad
+  [ -L "$_m" ] && return 0
+  if [ ! -e "$_m" ]; then WSP_FLM=none; return 0; fi
+  [ -f "$_m" ] || return 0
+  _o=$(wsp_stat_owner "$_m") || return 0
+  [ "$_o" = "$2" ] || return 0
+  WSP_FLM=done; return 0; }
+# wsp_fl_marker_write DIR RC RUNID: 0 only if DIR/firstlogin.done was newly created (temp file + mv, mode 600) as a regular file.
+wsp_fl_marker_write() { local _d=$1 _m _t
+  _m="$_d/firstlogin.done"
+  [ ! -L "$_d" ] && [ -d "$_d" ] || return 1
+  [ ! -e "$_m" ] && [ ! -L "$_m" ] || return 1
+  _t=$(mktemp "$_d/.firstlogin.XXXXXX") || return 1
+  if ! printf 'DONE rc=%s run=%s\n' "$2" "$3" > "$_t" || ! chmod 600 "$_t" || ! mv "$_t" "$_m"; then rm -f "$_t"; return 1; fi
+  [ -f "$_m" ] && [ ! -L "$_m" ]; }
+# GUID only when dscl exits 0 AND the line is exactly "GeneratedUID: <UUID>" (D3-05).
+wsp_user_guid() {
+  local _g
+  wsp_run _g dscl . -read "/Users/$1" GeneratedUID
+  [ "$WSP_RC" -eq 0 ] && wsp_one_line "$_g" || return 1
+  local LC_ALL=C _re='^GeneratedUID: [0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$'
+  [[ $_g =~ $_re ]] || return 1
+  printf '%s' "${_g#GeneratedUID: }"
+}
+# Admin membership with strict grammar: prints yes | no | unknown.
+wsp_admin_state() {
+  local _a _rc
+  wsp_run _a dsmemberutil checkmembership -U "$1" -G admin; _rc=$WSP_RC
+  if [ "$_rc" -ne 0 ]; then echo unknown; return; fi
+  case "$_a" in "user is a member of the group") echo yes;; "user is not a member of the group") echo no;; *) echo unknown;; esac
+}
+wsp_is_admin() { [ "$(wsp_admin_state "$1")" = yes ]; }
+# ---- first-login notice (d15 S-5): kept OUTSIDE the module 3 block on purpose. Module 3 (the installer) must never call osascript
+# (D14 text test); this notice is used only by UserSpace-preferences.txt at its two first-login PENDING_CONSENT branches (D15 S5N6).
+# wsp_fl_notify (d15 S-5, owner 2026-11-17 18:07): when the first-login agent stops at PENDING_CONSENT it shows the logged-in user ONE native
+# notification with FIXED text: no variable, no policy, user, asset-tag or key value, nothing interpolated (no AppleScript injection).
+# Report-only: it writes no file, never changes WSP_MODE, never touches the typed-APPLY gate; the caller keeps PENDING_CONSENT and its exit code.
+# Bounded like the suite's other waits: osascript runs in the background and is stopped after about 10 s (20 polls of 0.5 s; TERM, then KILL).
+# Sets WSP_FL_NOTIFY = shown | failed and WSP_FL_NOTIFY_EC = none | not-found | timeout | other (no GUI session or osascript exit != 0).
+# Always returns 0: a failed notice is recorded in the report detail and changes nothing else (never fail-open).
+wsp_fl_notify() {
+  local _p _n=0
+  WSP_FL_NOTIFY=failed; WSP_FL_NOTIFY_EC=not-found
+  command -v osascript >/dev/null 2>&1 || return 0
+  osascript -e 'display notification "Workstation setup is waiting for approval. Nothing was changed." with title "Workstation setup"' </dev/null >/dev/null 2>&1 &
+  _p=$!
+  while kill -0 "$_p" 2>/dev/null; do
+    if [ "$_n" -ge 20 ]; then
+      kill -TERM "$_p" 2>/dev/null; sleep 1; kill -KILL "$_p" 2>/dev/null; wait "$_p" 2>/dev/null
+      WSP_FL_NOTIFY_EC=timeout; return 0
+    fi
+    sleep 0.5; _n=$((_n+1))
+  done
+  if wait "$_p"; then WSP_FL_NOTIFY=shown; WSP_FL_NOTIFY_EC=none; else WSP_FL_NOTIFY_EC=other; fi
+  return 0
+}

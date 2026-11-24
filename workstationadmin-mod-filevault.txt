@@ -1,0 +1,237 @@
+#!/bin/bash
+# workstationadmin-mod-filevault.txt - FileVault inspection, enable and NEW-key file (module 6) R18 R19
+# Account: workstationadmin via launcher.
+# Root: required (sudo).
+# Bash 3.2, stock macOS tools only.
+# Dry run (inspect) is the default; changes happen only with --mode apply.
+# No secret is ever accepted as an argument, written to a log or reported.
+# Requirements: R18 R19 (P10; the owner's key-file decision supersedes the escrow gate).
+# d17 (module 6, the key-file decision): when FileVault is OFF and the root policy sets FILEVAULT_KEY_DIR and FILEVAULT_CONSENT=yes,
+# apply (after the typed APPLY) enables FileVault with fdesetup (the operator types the password into fdesetup, never
+# into this suite) and writes the NEW personal recovery key to <asset-tag>-FileVault-recovery-key.txt, mode 600, in
+# that folder. The key travels only through pipes and this shell's memory; it never reaches stdout, a report, a log,
+# argv or the environment. FileVault already on: no rotation, no re-enable, "no key exported". This module never
+# disables FileVault, never rotates a key and never reads an existing key or key file.
+# ---- trusted bootstrap (CR01) ------------------------------------------
+# Runs before anything else: fixed PATH, readonly EUID check, then trust checks
+# on the suite directory, every ancestor and the library, using only absolute
+# tool paths. The fixture hook is honoured only off macOS, as non-root, under a
+# canonical /tmp path; otherwise it is refused, never silently relaxed.
+set +x +a   # no tracing; no allexport (D3-03)
+# d14 (reviewer S1): every function that exists at this point was imported from the caller's environment (exported BASH_FUNC_*) or
+# defined by a BASH_ENV startup file; none is trusted, so all are discarded before the first tool name is resolved. BASH_ENV
+# itself has already been read by this shell (it cannot be cleared in time); unsetting it only protects the child shells.
+for _wsp_f in $(compgen -A function); do unset -f "$_wsp_f"; done
+unset BASH_ENV ENV
+PATH=/usr/bin:/bin:/usr/sbin:/sbin; export PATH
+case "${EUID:-x}" in ''|*[!0-9]*) echo "REFUSED: EUID unreadable" >&2; exit 4;; esac
+_wsp_os=$(/usr/bin/uname -s 2>/dev/null || /bin/uname -s)
+_wsp_fx=0
+if [ -n "${WSP_FIXTURE_ROOT:-}" ]; then
+  if [ "$_wsp_os" = Darwin ] || [ -d /System/Library/CoreServices ] || [ "$EUID" -eq 0 ]; then echo "REFUSED: fixture hook not allowed here" >&2; exit 4; fi
+  _wsp_c=$(cd "$WSP_FIXTURE_ROOT" 2>/dev/null && pwd -P) || { echo "REFUSED: fixture root" >&2; exit 4; }
+  case "$_wsp_c" in /tmp/?*) ;; *) echo "REFUSED: fixture root must canonically be under /tmp" >&2; exit 4;; esac
+  [ "$_wsp_c" = "${WSP_FIXTURE_ROOT%/}" ] || { echo "REFUSED: fixture root has a symlink" >&2; exit 4; }
+  _wsp_fx=1
+fi
+# Inherited suite-internal variables are discarded, including their export
+# attribute (documentation D4-1): unset removes both. Only the validated fixture hook stays.
+for _wsp_v in $(compgen -v WSP_); do case "$_wsp_v" in WSP_FIXTURE_ROOT) ;; *) unset "$_wsp_v";; esac; done
+[ "$_wsp_fx" -eq 1 ] || unset WSP_FIXTURE_ROOT
+_wsp_st() { if [ "$_wsp_os" = Darwin ]; then /usr/bin/stat -f "$1" "$2"; else /usr/bin/stat -c "$3" "$2"; fi; }
+_wsp_noacl() { # deny by default (D3-01): "+" refuses; "@" needs a one-line "ls -lde"
+  _wsp_l=$(/bin/ls -ld "$1" 2>/dev/null) || return 1
+  _wsp_l=${_wsp_l%% *}
+  case "$_wsp_l" in
+    ??????????|??????????.) return 0;;
+    ??????????@) _wsp_n=$(/bin/ls -lde "$1" 2>/dev/null) || return 1
+                 [ "$(printf '%s\n' "$_wsp_n" | /usr/bin/wc -l | /usr/bin/tr -d ' ')" = 1 ];;
+    *) return 1;;
+  esac
+}
+_wsp_trust() { # path: not symlink, no ACL, owner root|workstationadmin (fixture: caller), not group/world writable
+  [ -L "$1" ] && return 1
+  _wsp_noacl "$1" || return 1
+  _wsp_o=$(_wsp_st %Su "$1" %U) || return 1; _wsp_m=$(_wsp_st %Lp "$1" %a) || return 1
+  case "$_wsp_o" in root|workstationadmin) ;; *) [ "$_wsp_fx" -eq 1 ] && [ "$_wsp_o" = "$(/usr/bin/id -un)" ] || return 1;; esac
+  case "$_wsp_m" in *[2367]?|*[2367]) case "$_wsp_m" in 1???) [ -d "$1" ] && [ "$1" != "$_wsp_dir" ] || return 1;; *) return 1;; esac;; esac
+  return 0
+}
+case "$0" in /*) _wsp_self="$0";; *) _wsp_self="$(pwd -P)/$0";; esac
+_wsp_dir=$(cd "${_wsp_self%/*}" 2>/dev/null && pwd -P) || { echo "REFUSED: suite directory" >&2; exit 4; }
+_wsp_a="$_wsp_dir"
+while :; do _wsp_trust "$_wsp_a" || { echo "REFUSED: untrusted suite directory or ancestor" >&2; exit 4; }; [ "$_wsp_a" = / ] && break; _wsp_a=${_wsp_a%/*}; [ -n "$_wsp_a" ] || _wsp_a=/; done
+_wsp_lib="$_wsp_dir/workstationadmin-lib.txt"
+if ! { [ -f "$_wsp_lib" ] && _wsp_trust "$_wsp_lib"; }; then echo "REFUSED: library missing or untrusted" >&2; exit 4; fi
+_wsp_trust "$_wsp_dir/${_wsp_self##*/}" || { echo "REFUSED: entry script untrusted" >&2; exit 4; }
+# Residual risk: a process running as root or workstationadmin can still replace
+# files between this check and use. Those identities are trusted by design.
+# shellcheck source=/dev/null
+. "$_wsp_lib"
+WSP_MODULE="filevault"
+WSP_GATE_NEEDS=root
+wsp_parse_mode "$@"
+# Every parse below requires exit code 0 AND an exact known grammar (S05).
+wsp_run st fdesetup status
+fv=unknown
+if [ "$WSP_RC" -eq 0 ]; then case "$st" in "FileVault is On.") fv=on;; "FileVault is Off.") fv=off;; "Encryption in progress"*|"FileVault is On."*"Encryption in progress"*) fv=in-progress;; esac; fi
+case "$fv" in
+  on) wsp_status ALREADY_CORRECT R18 fv-state "fdesetup reports On" on on effective-cli 0;;
+  in-progress) wsp_status PENDING_LOGIN R18 fv-state "encryption in progress" on in-progress effective-cli 0;;
+  off) wsp_status PENDING_CONSENT R18 fv-state "FileVault is off: apply enables it (FILEVAULT_KEY_DIR, consent, typed APPLY) or the operator enables it in Settings" on off effective-cli 0;;
+  *) wsp_status UNKNOWN R18 fv-state "status not determinable" on unknown effective-cli "$WSP_RC" "$WSP_ERRCLASS";;
+esac
+wsp_run pr fdesetup haspersonalrecoverykey
+if [ "$WSP_RC" -ne 0 ]; then wsp_status UNKNOWN R18 personal-key-exists "command failed" true unknown effective-cli "$WSP_RC" "$WSP_ERRCLASS"
+else case "$pr" in
+  true) wsp_status ALREADY_CORRECT R18 personal-key-exists "personal recovery key present (value never read)" true true effective-cli 0;;
+  false) wsp_status PENDING_CONSENT R18 personal-key-exists "no personal recovery key" true false effective-cli 0;;
+  *) wsp_status UNKNOWN R18 personal-key-exists "output not in known grammar" true unparsed effective-cli 0 parse;; esac; fi
+wsp_run ul fdesetup list
+if [ "$WSP_RC" -ne 0 ]; then wsp_status UNKNOWN R18 unlock-operator "fdesetup list failed" listed unknown effective-cli "$WSP_RC" "$WSP_ERRCLASS"
+elif wsp_any_line_re "$ul" "^$WSP_OPERATOR,[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}\$"; then
+  wsp_status PENDING_LOGIN R18 unlock-operator "operator listed as FileVault user; restart unlock test still manual" listed listed effective-cli 0
+else wsp_status UNKNOWN R18 unlock-operator "operator not found in a known list line (do not remove the last unlock account)" listed not-found effective-cli 0; fi
+fvarch=$(wsp_read_arch) || fvarch=""
+if [ -z "$fvarch" ]; then wsp_status UNKNOWN R18 volume-owner "architecture unreadable or malformed" required-accounts unknown effective-cli
+elif [ "$fvarch" = arm64 ]; then
+  wsp_run vo diskutil apfs listUsers /
+  vo_yes=0; if [ "$WSP_RC" -eq 0 ]; then case "$vo" in *'Volume Owner: Yes'*) vo_yes=1;; esac; fi
+  if [ "$vo_yes" -eq 1 ]; then
+    wsp_status PENDING_CONSENT R18 volume-owner "some volume owner exists; ownership by each required account is NOT proven" required-accounts some-owner effective-cli 0
+  else wsp_status UNKNOWN R18 volume-owner "volume ownership not determinable" required-accounts unknown effective-cli "$WSP_RC" "$WSP_ERRCLASS"; fi
+else wsp_status ALREADY_CORRECT R18 volume-owner "not applicable on Intel" n/a n/a record; fi
+
+# --- R19 NEW-key file at a NEW enable (the key-file decision; d17 module 6) -----------------
+# The owner's key-file decision (fixed): ONLY when this run turns FileVault on, the NEW personal recovery key is written to
+# <asset-tag>-FileVault-recovery-key.txt, mode 600, in the operator's folder FILEVAULT_KEY_DIR (root policy).
+# FileVault on, in progress or unknown: no rotation, no re-enable, "no key exported".
+# Safe order (the key can never be lost silently, and a refusal happens BEFORE anything is enabled):
+#  1. read-only pre-checks: state exactly "FileVault is Off.", FILEVAULT_CONSENT=yes, asset tag (validated root-only
+#     record), folder grammar (absolute, plain, no dot segments, not a system/suite/policy/cloud-sync folder), every
+#     ancestor trusted (canonical path = given path: no symlink; owner; mode; no ACL), local disk, nothing at the name;
+#  2. the typed APPLY; then the state and the pre-checks again;
+#  3. BEFORE the enable: the EMPTY key file is created exclusively (umask 077 + noclobber: mode 600 from the first
+#     moment, any existing object refused), held open on fd 7, given to the operator, verified (regular, empty, 600,
+#     owner). Any failure: removed, FileVault NOT enabled, FAILED;
+#  4. INT/TERM/HUP are ignored from the enable until the key is on disk; fdesetup enable -outputplist (the operator types
+#     the password into fdesetup); its stdout is captured in memory (wsp_run pipes); the key is parsed with shell
+#     matching only and written with the printf builtin to fd 7 (no argv, env, stdout, report or log);
+#  5. size verified. Any failure after the enable: FAILED (exit 3), the incomplete file removed, operator guidance;
+#     the key is never printed. Residual (documented): SIGKILL or power loss between the enable and the write.
+FV_SUFFIX="-FileVault-recovery-key.txt"
+fvdir=$(wsp_policy FILEVAULT_KEY_DIR) || fvdir=""
+fvcons=$(wsp_policy FILEVAULT_CONSENT) || fvcons=""
+FV_TAG=""; FV_PATH=""; FV_WHY=""; FV_OPEN=0; FV_MADE=0; FV_DONE=0
+FV_OWNER=$WSP_OPERATOR; if [ "$WSP_FIXTURE" -eq 1 ]; then FV_OWNER=$(wsp_read_self) || FV_OWNER=""; fi   # fixtures run unprivileged: chown is a double
+FV_LOST="FileVault is on, but its NEW recovery key was NOT saved (it is never shown). Do not restart. Create a new personal key by hand (fdesetup changerecovery -personal) and save it; see runbook"
+fv_dir_ok() { # the folder value: absolute, plain characters, no dot segments, not a system, suite, policy or cloud-sync folder
+  case "$1" in /?*) ;; *) return 1;; esac
+  case "$1" in *[!A-Za-z0-9\ ._+/-]*|*//*|*/|*/./*|*/../*|*/.|*/..) return 1;; esac
+  [ ${#1} -le 200 ] || return 1
+  case "$1/" in /Applications/*|/Library/Management/*|/System/*|/private/*|/tmp/*|/var/*|/usr/*|/bin/*|/sbin/*) return 1;; esac
+  case "$WSP_ROOT$1/" in "$_wsp_dir/"*) return 1;; esac
+  case "$1" in *"Mobile Documents"*|*CloudStorage*|*iCloud*|*Dropbox*|*OneDrive*|*"Google Drive"*) return 1;; esac
+  return 0; }
+fv_dest_ok() { local _o # read-only: tag, folder, locality, nothing at the name. Sets FV_TAG, FV_PATH, FV_WHY.
+  FV_PATH=""
+  FV_TAG=$(wsp_read_asset_tag) || { FV_TAG=""; FV_WHY="the asset tag is not recorded or not valid (names module)"; return 1; }
+  wsp_add_redact "$FV_TAG"; wsp_add_redact "$fvdir"
+  fv_dir_ok "$fvdir" || { FV_WHY="FILEVAULT_KEY_DIR is unset or not a plain absolute folder (no dot segments, system or cloud-sync folders)"; return 1; }
+  if [ ! -d "$WSP_ROOT$fvdir" ] || [ -L "$WSP_ROOT$fvdir" ]; then FV_WHY="the key folder does not exist or is a symlink"; return 1; fi
+  wsp_trusted_dir "$WSP_ROOT$fvdir" "$WSP_OPERATOR" || { FV_WHY="the key folder or an ancestor is a symlink, has an ACL, an untrusted owner or is writable by others"; return 1; }
+  FV_PATH="$WSP_ROOT$fvdir/$FV_TAG$FV_SUFFIX"
+  if [ -e "$FV_PATH" ] || [ -L "$FV_PATH" ]; then FV_WHY="something already exists at the key file name (never overwritten)"; return 1; fi
+  wsp_run _o df -l "$WSP_ROOT$fvdir"
+  { [ "$WSP_RC" -eq 0 ] && wsp_any_line_re "$_o" '^/dev/'; } || { FV_WHY="the key folder is not on a local disk (df -l)"; return 1; }
+  return 0; }
+fv_close() { if [ "$FV_OPEN" -eq 1 ]; then exec 7>&-; FV_OPEN=0; fi; return 0; }
+fv_discard() { # close fd 7; remove the key file only if THIS run created it and it is still a regular non-link file
+  fv_close
+  if [ "$FV_MADE" -eq 1 ] && [ -f "$FV_PATH" ] && [ ! -L "$FV_PATH" ]; then rm -f "$FV_PATH"; fi
+  FV_MADE=0; return 0; }
+fv_on_exit() { if [ "$FV_DONE" -eq 0 ]; then fv_discard; fi; }
+trap 'fv_on_exit' EXIT
+trap 'exit 3' INT TERM HUP
+# fv_create: the EMPTY key file, made BEFORE the enable, right after fv_dest_ok refused any existing object at the name.
+# Exclusivity is the open itself: noclobber gives O_CREAT|O_EXCL for a missing name (a symlink, even dangling, is refused) and refuses
+# an existing regular file. Bash noclobber opens an existing FIFO or device WITHOUT O_EXCL (D3-02): such an object can only appear
+# between fv_dest_ok and this open, in a folder that only root or the operator can write (trusted by design, as for the report file);
+# the path checks after the open then refuse it. umask 077 makes the file mode 600 from its first moment. 0 = created, open on fd 7,
+# verified; 1 = refused (a file this run created is removed).
+fv_create() { local _m _o
+  umask 077   # the key file is mode 600 from its first moment (the library also sets 077 at load)
+  set -C
+  if ! { exec 7>"$FV_PATH"; } 2>/dev/null; then set +C; FV_WHY="the key file could not be created exclusively in the key folder"; return 1; fi
+  set +C
+  FV_OPEN=1
+  if [ -L "$FV_PATH" ] || [ ! -f "$FV_PATH" ] || [ -s "$FV_PATH" ]; then fv_close; FV_WHY="the key file name is not a new empty regular file"; return 1; fi
+  FV_MADE=1
+  chown -h "$WSP_OPERATOR" "$FV_PATH" || { fv_discard; FV_WHY="the key file could not be given to the operator"; return 1; }
+  _m=$(wsp_stat_mode "$FV_PATH") || _m=""
+  [ "$_m" = 600 ] || { fv_discard; FV_WHY="the new key file is not mode 600"; return 1; }
+  _o=$(wsp_stat_owner "$FV_PATH") || _o=""
+  [ -n "$_o" ] && [ "$_o" = "$FV_OWNER" ] || { fv_discard; FV_WHY="the new key file is not owned by the operator"; return 1; }
+  return 0; }
+fv_written_ok() { local _s # LEN: the file holds exactly LEN+1 bytes (key and newline) and is still a regular non-link file
+  [ -f "$FV_PATH" ] && [ ! -L "$FV_PATH" ] || return 1
+  _s=$(wsp_stat_size "$FV_PATH") || return 1
+  [ "$_s" = $(( $1 + 1 )) ]; }
+fv_enable_write() { # 0 = enabled, key written; 1 = not enabled (file removed); 3 = enabled or unknown, key NOT saved (file removed)
+  local _p="" _k="" _l _ifs _n=0 _nx=0 _rc _s=""
+  local _rk='^[[:space:]]*<key>RecoveryKey</key>[[:space:]]*$' _rv='^[[:space:]]*<string>([A-Z0-9]{4}(-[A-Z0-9]{4}){5})</string>[[:space:]]*$'
+  trap '' INT TERM HUP
+  printf '%s\n' "fdesetup now asks for the $WSP_OPERATOR password (typed into fdesetup only; the key is never shown)." > /dev/tty
+  wsp_run _p fdesetup enable -user "$WSP_OPERATOR" -outputplist < /dev/tty
+  _rc=$WSP_RC
+  _ifs=$IFS; set -f; IFS=$WSP_NL
+  for _l in $_p; do
+    if [ "$_nx" -eq 1 ]; then _nx=0; if [[ $_l =~ $_rv ]]; then _k=${BASH_REMATCH[1]}; _n=$((_n+1)); else _n=9; fi; fi
+    if [[ $_l =~ $_rk ]]; then _nx=1; fi
+  done
+  IFS=$_ifs; set +f; _p=""
+  if [ "$_rc" -ne 0 ] || [ "$_n" -ne 1 ]; then
+    _k=""
+    wsp_run _s fdesetup status
+    if [ "$WSP_RC" -eq 0 ] && [ "$_s" = "FileVault is Off." ]; then fv_discard; trap 'exit 3' INT TERM HUP; return 1; fi
+    fv_discard; trap 'exit 3' INT TERM HUP; return 3
+  fi
+  if printf '%s\n' "$_k" >&7 && exec 7>&- && fv_written_ok "${#_k}"; then
+    _k=""; FV_OPEN=0; FV_DONE=1; trap 'exit 3' INT TERM HUP; return 0
+  fi
+  _k=""; fv_discard; trap 'exit 3' INT TERM HUP; return 3; }
+fv_apply() { local _s="" _r
+  wsp_run _s fdesetup status   # the state again, right before anything is created
+  if [ "$WSP_RC" -ne 0 ] || [ "$_s" != "FileVault is Off." ]; then
+    wsp_status BLOCKED_POLICY R19 key-export "FileVault is no longer reported off: no key exported, nothing enabled" exported refused record; return; fi
+  fv_dest_ok || { wsp_status BLOCKED_POLICY R19 key-export "refused: $FV_WHY; FileVault is not enabled" exported refused record; return; }
+  fv_create || { wsp_status FAILED R19 key-export "refused before the enable: $FV_WHY; FileVault is NOT enabled, nothing kept" exported refused record; return; }
+  fv_enable_write; _r=$?
+  case "$_r" in
+    0) wsp_status CHANGED_VERIFIED R19 key-export "NEW key written to the asset-tag key file (mode 600, operator owner, size verified; value never shown)" exported exported record
+       wsp_run _s fdesetup status
+       case "$_s" in "FileVault is On."*|"Encryption in progress"*|*"restart"*) wsp_status CHANGED_VERIFIED R18 fv-enable "FileVault enabled by fdesetup (personal recovery key)" on enabled effective-cli 0;;
+         *) wsp_status UNKNOWN R18 fv-enable "fdesetup reported success; state afterwards not determinable" on unknown effective-cli "$WSP_RC" "$WSP_ERRCLASS";; esac;;
+    1) wsp_status FAILED R18 fv-enable "fdesetup did not enable FileVault (password, token or tool failure); nothing exported; the empty key file was removed" on off effective-cli;;
+    *) wsp_status FAILED R19 key-export "$FV_LOST" exported lost record;;
+  esac; }
+if [ "$fv" = off ] && [ -z "$fvdir" ] && [ -z "$fvcons" ]; then
+  wsp_status PENDING_CONSENT R19 key-export "not configured (FILEVAULT_KEY_DIR, FILEVAULT_CONSENT): enable in Settings and save the NEW key by hand (runbook)" exported unknown manual
+elif [ "$fv" = off ]; then
+  if [ "$fvcons" != yes ]; then wsp_status BLOCKED_POLICY R19 key-export "FILEVAULT_CONSENT=yes is not set in the root-owned policy; FileVault is not enabled" exported refused record
+  elif ! fv_dest_ok; then wsp_status BLOCKED_POLICY R19 key-export "refused: $FV_WHY; FileVault is not enabled" exported refused record
+  elif [ "$WSP_MODE" != apply ]; then
+    wsp_status PROPOSED R19 key-export "would enable FileVault and write the NEW key to the asset-tag key file (mode 600) after the typed APPLY" exported absent record
+  elif ! wsp_confirm "Enable FileVault now and write its NEW recovery key to the asset-tag key file in FILEVAULT_KEY_DIR (mode 600)? fdesetup asks for the $WSP_OPERATOR password." "APPLY"; then
+    wsp_status PENDING_CONSENT P01 apply-gate "the typed APPLY for the FileVault enable was not given (no terminal or another answer); nothing changed" confirmed not-confirmed manual
+  else fv_apply; fi
+elif [ "$fv" = on ] || [ "$fv" = in-progress ]; then
+  wsp_status PENDING_CONSENT R19 key-export "FileVault is already on: no key exported (no rotation, no re-enable; an existing key is never read)" exported no-key-exported record
+else
+  wsp_status UNKNOWN R19 key-export "FileVault state not determinable: no key exported, nothing enabled" exported unknown record
+fi
+# Separate manual status: moving the file to external storage (the key-file decision) is done
+# by the operator and is never verified by code.
+wsp_status PENDING_CONSENT R19 key-external-import "operator copies the key file to the approved external storage; manual, not verified by code" imported unknown manual
+wsp_status PENDING_LOGIN R18 restart-unlock-test "planned restart unlock test per account: manual" "" "" manual
+wsp_finish

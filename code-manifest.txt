@@ -1,0 +1,283 @@
+code-manifest.txt - macOS provisioning suite: code file list, hashes and change record.
+The suite itself never pushes; publishing is a separate release step.
+Code files only. No personal or noreply address appears in any file; commit metadata is
+a release-step matter.
+Preserved unchanged: d1 365422cf..., d2 a5b45a95..., d3 011eb5d3..., d4 522613da..., d5 ba722851...,
+d6 d5e7130b..., d7 3e728f76..., d8 12c82b30..., d9 4ec7df62..., d10 159fd0ad..., d11 49831690..., d12 2cf6d8a7..., d13 162122c2..., d14 (d14r) 2ed3c5ac..., d15 (draft6) 991356ea..., d16 (draft3) 5623590d..., d17 (draft1) fc29b5f4..., d18 (draft1) e54f1dd5... tars (hashes verified in the author run dir).
+STATUS: PARTIAL. Disabled operations are not fulfilled. No Mac or Bash 3.2 run.
+Author sandbox evidence is recorded OUTSIDE this tar, bound to this tar's sha256:
+the author run directory (outside this tar) (tar hash before/after, bound file inventory
+before/after, test-runner bwrap command, stdout, stderr, exit, wall time, PREMISE TEST evidence, scrub,
+ShellCheck and static-check output, call-site inventory). Author evidence only; it does not prove
+privacy, Mac behaviour or Bash 3.2 runtime. An independent test run repeats it.
+Version label 0.18-d18-draft5.
+All counts in the GENERATED sections below were produced by the freeze script
+(the build tooling freeze script, run AFTER the last harness edit) from the files in this tar, not typed.
+
+STEP 7, PRE-PUBLICATION TEXT CLEANUP (d18 draft5, from d18 draft4 11976608..., draft3 2c42d7c5..., draft2 8164be58... and draft1 e54f1dd5...; base d17 draft1 fc29b5f4..., APPROVED PARTIAL). TEXT ONLY, NO BEHAVIOUR CHANGE:
+internal build-environment paths and internal role names are removed from comments, notes and message text in every file of this tar and
+replaced by generic wording (reviewer, documentation, the test runner, the test host, a relative or descriptive path). The interface file is
+renamed to interface-plan-for-documentation.txt (no code reads it). Version label 0.18-d18-draft5. One test input path changed: T1 now passes
+a non-existent path outside /tmp that is not a build path (same refusal branch, same exit 4). HARNESS_BUDGET unchanged (2100 active s).
+DRAFT2 (reviewer d18 draft1 review, behaviour approved PARTIAL): PUB-1 comment rewording in workstationadmin-mod-names.txt (a site-specific tag
+prefix example removed), SUG-L (a private decision id replaced by "the key-file decision" in comments), SUG-M (this manifest: budget 2100 active s),
+SUG-J (new harness test T1b: WSP_FIXTURE_ROOT=/usr, an existing folder outside /tmp, is refused with exit 4; no existing assertion changed).
+DRAFT3 (owner decision on reviewer SUG-N): comment/text only, a time-zone name in this manifest and the interface header replaced by
+generic wording.
+DRAFT4 (owner decision on a test-run finding): comment/text only, the interface header lines 2, 3 and 6 reworded to generic text
+(no draft ids, no publication claim, no review status).
+DRAFT5 (reviewer SUG-P, owner decision to publish): text only, the restricted-distribution file-header comments, the
+tooling notes in the static and scrub checks and the draft/candidate titles of this manifest and the interface made neutral; real
+status (PARTIAL, not Mac-validated) kept; label 0.18-d18-draft5. No mutation chain for draft3..draft5 (diff-only review). Itemised list: the cleanup notes outside this tar.
+
+STEP 6, MODULE 6, FILEVAULT ENABLE + NEW-KEY FILE (d17, the owner's key-file decision), plus reviewer d16 SUG-1..SUG-3.
+MODULE 6: workstationadmin-mod-filevault.txt apply ENABLED for ONE path (root, launcher typed APPLY, root gate, FILEVAULT_CONSENT=yes,
+FILEVAULT_KEY_DIR, the module's OWN typed APPLY): when FileVault is OFF it creates the EMPTY <asset-tag>-FileVault-recovery-key.txt
+exclusively (umask 077 + noclobber, mode 600 from the first moment, no symlink at the leaf or in the folder path, validated asset tag,
+no traversal) BEFORE "fdesetup enable -user <operator> -outputplist" (password typed into fdesetup), then writes the NEW key from the
+in-memory plist with the printf builtin to the open file (never argv, env, stdout, a report, a log or a temp file). FileVault already
+on: no rotation, no re-enable, "no key exported". Failure order: refusals before the enable (nothing enabled); after the enable FAILED,
+exit 3, operator guidance, the key never printed. Interface sec 13e. The key-export-automatic UNSUPPORTED record is gone.
+SUG-2: module 5 EXIT trap detaches an image a signal caught during hdiutil attach (new test D16 AP21). SUG-1: TSV retargets. SUG-3:
+interface sec 1. Admin-session stays DISABLED.
+HARNESS CHANGE (flagged): T11 updated for module 6; HARNESS_BUDGET stays 2100 active s (dev full run 1398 s active).
+MUTATION EVIDENCE IS NOT PART OF THIS FREEZE: the d17 targeted list (tools/mutations17-targeted.tsv,
+the d17 targeted-mutant list (outside this tar)) waits for the reviewer's approval.
+
+DRAFT2 (reviewer d16 diff review, round 1: approve-PARTIAL at the diff stage, 0 blocking): new tests D16 AP20 (race at /Applications,
+like SH19c), AP17 leaf-spoof parser cases, AP12e (staged app re-verify), AP5 modes; mutants M+1..M+4 + 3 optional (DRAFT2 section of the TSV).
+S-1 Developer ID OIDs in the codesign requirement; S-2 chmod -R go-w on the staged app; S-3/S-5/S-6 interface text; S-4 module 4 put-back rc 3 text.
+STEP 5, MODULE 5, APP INSTALL FROM LOCAL SIGNED PACKAGES (d16), plus the reviewer's draft6 suggestions S-8..S-11 and tooling T-1/T-2.
+MODULE 5: workstationadmin-mod-apps.txt apply ENABLED (root, launcher typed APPLY, root gate, APP_INSTALL_CONSENT=yes, the module's OWN typed APPLY):
+installs only from a LOCAL operator-supplied .pkg or .dmg (APP_SOURCE_DIR + APP_PACKAGES) whose Apple signature and Team ID match the per-app
+APP_TEAM_IDS allowlist (S-2: unset or empty = BLOCKED_POLICY), with Gatekeeper assessment, a root-only staged copy verified again, read-only
+nobrowse mounts always detached, no overwrite of an existing app. No download, no App Store, no Apple Account, no quarantine removal. Interface sec 13c.
+S-8/S-9/S-10 in lib wsp_rename_nofollow (S-9 own module 4 text), S-11 test D15 S5N7, S-12 kept. Admin-session and the FileVault key writer stay DISABLED (d16).
+HARNESS CHANGE (flagged): HARNESS_BUDGET 1500 -> 2100 active s. MUTATION EVIDENCE IS NOT PART OF THIS FREEZE: the d16 targeted list
+(tools/mutations16-targeted.tsv, the d16 targeted-mutant list (outside this tar)) waits for the reviewer's approval.
+STEP 4, MODULE 4, SHARED RESOURCES COPY (d15), plus the owner's answers Q3/Q4/Q9 and the reviewer's d14 suggestions. Evidence (bound to this tar):
+the full harness gate run in the author run dir. MUTATION EVIDENCE IS NOT PART OF THIS FREEZE: the d15 targeted list (tools/mutations15-targeted.tsv,
+listed in the d15 targeted-mutant list (outside this tar)) is sent to the reviewer first and runs only after approval (mutchain15t.sh,
+pause-aware 1200 s active cap per attempt, 3600 s wall backstop, controls control-sh, control-ag, control-stall; a cap hit is UNRESOLVED, never a kill).
+MODULE 4: workstationadmin-mod-shared.txt apply ENABLED (root, launcher typed APPLY, root gate, SHARED_COPY_CONSENT=yes): real copies of the operator's
+SHARED_ITEMS from SHARED_SOURCE_DIR into /Users/Shared through a root-only staging folder, explicit root:wheel and 0755/0644, three compares, no
+overwrite without a verified backup (SHARED_CONFLICT=backup-replace; default skip). Apps and admin-session stay DISABLED (S-2 open for apps).
+Q9: the first-login apply asks its OWN typed APPLY; no terminal at login = PENDING_CONSENT, zero writes. Q4: no done marker after a failed step; ONE
+reused first-login backup folder (firstlogin-original). Q3 accepted as is. Q2: a present-but-rejected FIRSTLOGIN_LABEL refuses. Q5 text fixed.
+Q6: UserSpace-firstlogin.txt removed. S-1: this manifest is generated by freeze.sh after the last harness edit. S-3: summary label "note:". S-9 comment.
+HARNESS CHANGE (flagged): per-run limits use ptimeout (pause-aware: active time = wall minus ticker gaps > 5 s) and the harness budget compares active
+time; tests D15 H1-H6b (H1: a genuine hang with no ticker gap is still stopped with exit 124). DRAFT2 (gate triage, harness only): ptimeout waits up to
+3 s for the tick that closes a gap before deciding (H6; a dead ticker still earns nothing, H6b); a SH test pattern no longer trips the T12 forbidden-construct scan.
+DRAFT3 (gate triage round 2, harness only): H1/H3/H6/H6b time themselves with SECONDS, so a REAL host pause broke their wall bounds; pt_stalled (real ticker
+gap > 5 s since the try began) reruns a paused try, at most 3 tries, the 3rd judged as is ('# DIAG Hx try N'); verdict lines unchanged.
+STEP 3, MODULE 3, THE FIRST-LOGIN LAUNCHAGENT (d14), plus the d13 review suggestions. Evidence is in the author run dir (bound to this tar):
+the full harness gate run and the mutation chain (mutchain14.sh, capped, 187 mutants + 4 controls) run on this tar after the freeze; their results are NOT
+part of this text (they are recorded in the run dir, and the chain may still be running when the tar is handed over).
+THE REVIEWER'S d14 CONDITIONS (d13 closure): D14 CTF (tty double exits 1 but prints a /dev name; kills ctf-tty-check), D13 S4 guard (own assertion for
+s4-guard-drop), D14 CR3 (root refusal BEHAVIOUR through a user-namespace root double, exit 4, zero writes), D14 S5 read cap + a 120-call fuse in the
+plutil double + mutant s5-read-cap-removed, the S8 double mutant bk-root-link+recheck, and the d13 mutants not yet run (32) now in mutations14.tsv.
+FIX FOUND BY THE D14 S3 TEST: the typed-APPLY prompt now goes to the real stderr (fd 5); in d13 it went to fd 2 = /dev/null and was never shown.
+MODULE 3: workstationadmin-mod-firstlogin.txt is now a narrow root installer (apply enabled; shared, apps and admin-session stay disabled):
+it installs ONE LaunchAgent plist (/Library/LaunchAgents, root, 0644, exact four-key text, RunAtLoad + Aqua, no KeepAlive) and root-owned
+non-writable copies of UserSpace-preferences.txt and the library (<session dir>/bin, 0444), and LAST a root-written consent record bound to
+the SHA-256 of user-prefs.conf and the USERS value. At a listed user's first GUI login the installed copy runs once as that user
+("--mode apply --firstlogin"), applies only the operator's list through the module-2 pipeline, writes a done marker in the user's own
+folder and does nothing at later logins. A missing, stale or bad record = PENDING_CONSENT, zero writes (fail closed). No launchctl, no
+LaunchDaemon, no login hook, no TCC, no network. UserSpace-firstlogin.txt was superseded in d14 and is REMOVED in d15 (Q6). See interface sec 13a (normative,
+including the manual removal and rollback record and the Mac items L1-L9).
+D13 REVIEW SUGGESTIONS: S1 imported functions, BASH_ENV and ENV discarded at the start of every entry script, /usr/bin/tty by absolute path,
+typed APPLY documented as a consent step, not authentication; S2 stdin reaches the tty tool through wsp_run (tested); S3 the list is validated and
+summarised BEFORE the APPLY prompt; S4 a preference KEY may start with an underscore (_FXShowPosixPathInTitle; d15/Q5: any number pass the grammar, the fixed table refuses unlisted keys), a domain may not; S5 units guard;
+S6 the login state is read again right before each user's first write (offline path); S7 mutation kills need a matching expected-assertion pattern and a
+clean bash -n of the mutated file; S8 double mutant for bk-root-link; S9 pilot precondition (Remote Login and Screen Sharing off) and Mac items 15-17.
+STEP 2, MODULE 2 HARDENING (d13): after the reviewer's d12 review (suggestions S1-S15) and four documentation items. Evidence: the gate and
+author full harness, premise run, scrub and static results are in the author run dir (bound to this tar); the mutation chain is NOT part of this freeze.
+C3: duplicate (domain,key) pairs and non-canonical ints rejected. S2: fixed domain->key table in the library (config can only narrow);
+Managed Preferences files refuse a domain. S5: offline write verified on disk (plutil as the target user, typed). S3/S4: login state and a
+process-owner proof read fresh per user; fail closed. S9, S10, S11, S12, S13 done; S6/S8 root-refusal static test; S7 rc asserts; S15 extra
+grammar variants; S14 (file naming) see the d13 review file. Documentation items: typed APPLY (tty tool + stdin, PENDING_CONSENT), backup= as ~/... (own session) or full path (offline), interface refresh.
+Owner decisions: S5 read retried at most 3 times; no intersect file; home with a space refused; pre-write window accepted for the pilot.
+STEP 2, MODULE 2 (d12): USER PREFERENCES (requirement R21) plus the d11 carry-overs, after the reviewer APPROVED d11 (0 blockers).
+Two entry points over one per-entry pipeline (wsp_pref_entry): UserSpace-preferences.txt (runs as the target user in its own
+GUI session; root never writes into a logged-in user's preference domain) and workstationadmin-mod-userprefs.txt (launcher module
+userprefs; OFFLINE path for a user who is NOT logged in only; writes AS the target user through sudo -n -u USER defaults write on a
+path domain; home, ownership, mode, ACL and symlink checks). Preference lists come ONLY from the operator file user-prefs.conf
+(no built-in values; generic examples in interface sec 13); apply needs the session key USER_PREFS_CONSENT=yes. A generic library
+allowlist of 7 Apple per-user domains (moving it to operator config is a reviewer question). Managed or profile-controlled
+domains -> BLOCKED_POLICY; unknown domain -> BLOCKED_POLICY; malformed config -> whole file rejected; read-back mismatch -> FAILED.
+Backups reuse wsp_backup / wsp_backup_check (optional backup-root argument). See interface sec 13 (normative).
+D11 RELEASE CONDITIONS: R2 DONE (r2_primary asserts the primary refusal text in the shape, bad-copy and unwritable-backup tests; bk-order
+and bk-cmp mutants must die on them); R3 DONE (od wrapper modes swap/finaladdr/dupdrop, printf shadow, invalid-ERE units for
+wsp_any_line_re and wsp_re, limit+count-octal-length double mutant; capture-pipeline left as is); R4 and R5 are Mac-confirmation items
+(interface sec 13, last paragraph).
+D11 REVIEWER SUGGESTIONS DONE: failed backup directories are removed and a symlinked backup root is refused; test 8f tightened;
+"Enrolled via DEP: Yes" -> managed (BLOCKED_POLICY), an odd DEP line -> unknown; the stale "DRAFT d10" header and the admin-session
+disable reason fixed; version label 0.12-d12-draft; the written-key report detail keeps the last component and the FULL backup path is
+in the new optional record field backup= (grammar class "path" in wsp_norm; a schema extension of wsp-report/1). Worksheet time-zone
+label corrected to the local time zone (that line only). Audit nest=2 branch (nested-group ERE cannot be evaluated) now has a test.
+Open (owner/Reviewer): the allowlist location (library constant vs operator config); UserSpace-firstlogin's own preference writer is left for module 3.
+
+CARRIED FROM d11 (unchanged text):
+STEP 2, MODULE 1 (d11): the SOFTWARE UPDATES writer (restored in d10) after the reviewer's d10 REQUEST CHANGES.
+Every other writer stays disabled and fails closed. Requirement R16 (R17/R20 unchanged). Apple-supported
+methods only; no install, no restart, no Apple Account or paid action. See interface sec 12 (normative).
+
+REVIEWER D10 DISPOSITIONS (REQUEST CHANGES; B1-B3 blockers, S4-S11 suggestions)
+B1 DONE (wsp_backup / wsp_backup_check in the library). A symlink (also dangling) is refused FIRST (test -L before
+   anything else); a path that exists but is not a regular file (directory, FIFO) is refused; a missing plist gets
+   an explicit <name>.ABSENT marker; the copy is compared with cmp and a bad copy fails the backup; every backup
+   directory is unique (mktemp -d, 0700), so two runs in one second keep both; right before the first write per
+   plist the source is compared with the backup again and the write is refused if anything changed. A failed or
+   refused backup -> FAILED for that plist's keys, zero writes to it. Tests: dangling symlink, directory, FIFO,
+   bad copy (cp stub writes other bytes), change between backup and write, absent marker, two applies keep separate backup directories.
+B2 DONE, owner decision: the five security-update keys (AutomaticCheckEnabled, AutomaticDownload,
+   ConfigDataInstall, CriticalUpdateInstall, commerce AutoUpdate) accept ONLY "on"; "off" -> BLOCKED_POLICY with zero
+   writes and no backup, one test per key. UPDATES_MACOS_INSTALL (AutomaticallyInstallMacOSUpdates; report label
+   AutoInstallOSUpdates) stays "off" only. No operator-chosen "off" is built.
+B3 DONE (wsp_profile_state). none only when the output of profiles show -type configuration is exactly an empty
+   listing in the real grammar AND profiles status -type enrollment reads "MDM enrollment: No". Any listing line
+   naming com.apple.SoftwareUpdate / commerce / appstore / applicationaccess / ManagedClient, or "MDM enrollment:
+   Yes", gives managed (BLOCKED_POLICY); unrecognised output, an unreadable enrollment state, or a listing with
+   only unrelated profiles gives UNKNOWN; never a write. Fixtures use the real "profiles show" grammar
+   (_computerlevel[N] attribute lines, "profile identifier" and "payload type" lines). The grammar and DDM
+   behaviour are Mac-confirmation items.
+S4 DONE. The backup directory name is in the detail of every written key; a rollback-manual PENDING_CONSENT record
+   gives the manual restore step (the restore command text itself is listed as a doc change).
+S5 DONE. New mutants (author run dir mutation/): restore the silent grep at the audit nested-group and power
+   displaysleep match sites, a managed-profile match that never matches, drop -bool, corrupt a domain, corrupt a
+   key name, remove the apply-gate call, restore the -f-before--L backup order, drop cmp, drop the ABSENT marker,
+   disable the pre-write re-check, remove the on-only rule, ignore MDM yes, ignore the enrollment check, narrow the
+   managed domain list; plus the d10 set. Each must fail its reduced harness; controls must not.
+S6 DONE. The premise run (d12 harness against the d11 code) runs WITHOUT FAILFAST; every failing section is listed.
+S7 DONE. The scrub exemption is matched on the file's RELATIVE path; a same-named file in a sub-directory is a HIT.
+S8 DONE. Static rule R also covers versioned interpreters (python3.11, perl5, ruby3.2 ...), "| $var" and
+   "| \"$var\"" (self-test per line plus pipe-free twin).
+S9 DONE. The exempt count is written to its own file, not into the hit stream; a file named like the old marker
+   (#EXEMPT 9) is an ordinary hit and cannot forge or break the count (test).
+S10 DONE. Mutation summaries from reduced harnesses read "PARTIAL (mutation run)" and never exit 0.
+S11 DONE as a list: Mac-confirmation items in interface sec 12 (profiles grammar and empty-listing wording,
+   enrollment wording, DDM, softwareupdate --schedule wording, defaults output, cfprefsd/softwareupdated pick-up
+   without a restart - the suite never restarts a daemon - mktemp/cp/cmp behaviour of the stock tools).
+Not done (deferred, with reason): an operator-chosen "off" for the five keys (owner decision B2); classifying
+   unrelated profiles as harmless (needs real "profiles show" output from a Mac; UNKNOWN is the safe answer);
+   detecting cp/cmp tools that lie consistently (undetectable by any in-suite check; same limit as the text tools);
+   an automatic restore (manual by design: the report names the backup).
+TEST NOTE (apply gate): wsp_apply_gate is a non-interactive prerequisite/policy check, not an interactive consent
+   prompt; wsp_confirm is not used on the updates path (harness text check "D11 text"; the driver's APPLY prompt is
+   separate). Stated in interface sec 12 and listed as a doc change.
+New typed readers in the library (d10): wsp_pref_read, wsp_su_schedule, wsp_profile_state; wsp_mdm_state reused.
+
+HARNESS RUNTIME: per-run limit 60 s, whole-harness budget 2100 s of ACTIVE time (wall minus ticker stalls; was 1500 s before d16). Wall-clock; the test host sometimes
+pauses (the ticker shows 100+ s gaps), which can cause a lone spurious "TIMEOUT 60s". A clean rerun
+alone is the check; the DIAG line now shows whether the test host itself stalled. Measured numbers: run
+dir time.txt.
+
+PUBLIC-REPO SCRUB (workstationadmin-scrub-check.txt; interface section 11)
+Site patterns live in a local file OUTSIDE the suite. Generic rules: IP, MAIL (incl. noreply),
+HOST, VEND; site-pattern and file-name matches. Output is path:line plus rule number only.
+documentation-*.txt hits print as DOCHIT (exit 0) unless --strict-docs.
+RELEASE MODE: --site-file FILE --strict-docs. Result: run dir scrub-*.txt.
+The line-exemption token is honoured only in the check itself (relative-path allowlist in the check; the harness carries none);
+elsewhere (also a same-named file in a sub-directory) it is a HIT; exempt=N is printed and pinned (--expect-exempt).
+Operator config carries everything site-specific (COMPUTER_NAME_TEMPLATE, LOCAL_HOST_NAME_TEMPLATE,
+USERS, SHARED_ITEMS, USER_PREFS, APP_LIST). Defaults and tests use ExampleChat / Example Sheets.
+Open owner decision: WSP_OPERATOR default "workstationadmin" is also the file-name prefix; it is an
+operator-account convention, not an employer value, and is kept.
+
+CALL-SITE INVENTORY: callsite-inventory.txt in the run dir (generated by grep over the tar contents).
+
+LIMITS carried (interface section 10): path/report races by same uid or root, ACL content, 0700
+report parent recommended, two apply paths (admin-session, the FileVault key writer) disabled,
+FileVault key writer not present, synthetic fixtures only, trusted stock text tools cannot be
+detected when they lie consistently.
+
+DOC CHANGES NEEDED (documentation; code author does not edit documentation-*.txt)
+d18 changes that the documentation must reflect: text only. The interface file is renamed to interface-plan-for-documentation.txt
+(same content apart from the cleanup and the d18 header lines); the version label is 0.18-d18-draft1; internal build paths and role names
+are gone from code comments and text. No operator-visible behaviour, policy key, status, exit code or file layout changed.
+Draft2 was comment-only plus one harness test; draft3 only replaced a time-zone name with generic wording; draft4 only reworded the interface header lines; draft5 (label 0.18-d18-draft5) only makes file-header comments neutral; no documentation change beyond the archive hash and label.
+The d17 list below stays in force.
+d17 changes that the documentation must reflect (the documentation-*.txt files are NOT edited by the code author). Normative text: interface sec 13e
+(plus sec 1, 3, 5, 10). The d16 list (interface sec 13c, 13d) is unchanged and stays in force.
+A. Module 6, FileVault enable and NEW-key file (R18, R19; the owner's key-file decision): restored, narrowly
+  1. Launcher module "filevault" (root, through sudo). New root policy keys: FILEVAULT_KEY_DIR (the operator-chosen local folder) and
+     FILEVAULT_CONSENT (exactly "yes"). Neither set: unchanged manual path (enable in Settings, save the NEW key by hand; PENDING_CONSENT).
+  2. Only when FileVault is OFF and this run turns it on: <asset-tag>-FileVault-recovery-key.txt, mode 600, owner the operator, in
+     FILEVAULT_KEY_DIR; content = the key and a newline. The operator types the password into fdesetup (enable -user <operator> -outputplist).
+  3. FileVault already on or encrypting: no rotation, no re-enable, nothing read; key-export PENDING_CONSENT "no key exported".
+  4. Refusals BEFORE anything is enabled (BLOCKED_POLICY, or FAILED "refused before the enable" with exit 3 once the empty file was tried):
+     folder unset, relative, with "." or ".." segments, "//" or trailing "/", a system, policy, suite or cloud-sync folder, missing, a
+     symlink, under a symlinked parent, writable by others, with an ACL, not on a local disk; asset tag missing or invalid; anything (a
+     file, a symlink, a dangling symlink) at the key file name; the exclusive create fails or the new file is not a 600 operator-owned
+     empty regular file.
+  5. After the enable, if the key cannot be saved: FAILED, exit 3, the incomplete file removed, operator guidance: "Do not restart.
+     Create a new personal key by hand (fdesetup changerecovery -personal) and save it; see runbook". The key is never printed.
+  6. The key never appears on stdout, stderr, in a report or log, in a child's argv or environment, or in any other file; reports are
+     redacted (key-shaped values print as [secret-shape]). INT/TERM/HUP are held from the enable until the key is on disk.
+  7. Runbook (documentation): where the operator copies the key file (approved external storage; key-external-import stays manual);
+     a restart is needed for FileVault on some Macs; never put FILEVAULT_KEY_DIR in a synced folder.
+B. Module 5 (reviewer d16 SUG-2): a signal while "hdiutil attach" runs no longer leaves the image attached (the EXIT trap probes the
+   mount point); the staging folder is removed. No interface change for operators.
+C. Interface sec 1 status line (SUG-3), sec 3 (FileVault no longer disabled; one disabled path left: admin-session), sec 5 (two policy keys),
+   sec 10 (one disabled path), new sec 13e. Launcher header text updated. Version label 0.17-d17-draft1.
+D. Harness: new section D17 module 6 (FV1-FV18), D16 AP21 (SUG-2), T11 updated (FileVault on: no key exported); HARNESS_BUDGET unchanged (2100).
+
+
+GENERATED: STATIC CHECK (workstationadmin-static-check.txt --check-allow)
+static check (d18 draft5 checker, d18 draft5 tree): exit 0; STATIC-CHECK hits=0 allowed=24 files=19 lines=4656
+  rule counts reported as hits: none (exit 0 means 0 unlisted hits and 0 stale ALLOW entries)
+  allowed lines by category:
+         4     rule N: filesystem trust (documented bootstrap-class boundary)
+         1     rule N: named stderr-folding helper, invoked only through wsp_run
+         1     rule N: unused legacy checkpoint helper (no caller)
+         1     rule P: checkpoint file-name sanitising (not evidence)
+         1     rule P: filesystem trust (ACL listing; documented bootstrap-class boundary)
+         1     rule P: pseudonym hash label (not evidence)
+         1     rule P: random run-id label (not evidence)
+         1     rule R: capture pipeline; its statuses are validated by the WSPRC/WSPWC records
+         1     rule R: capture validator awk, status checked (|| wsp_run_fail)
+         1     rule R: checkpoint file-name sanitising (not evidence)
+         1     rule R: filesystem trust (ACL listing; documented bootstrap-class boundary)
+         1     rule R: help text of the entry script itself (read-only)
+         1     rule R: help text of this file (read-only)
+         1     rule R: per-run salt piped to the child module on stdin (no captured fact)
+         3     rule R: provenance hash (report label only)
+         1     rule R: pseudonym hash label (not evidence)
+         1     rule R: random run-id label (not evidence)
+         1     rule R: salt generation, status checked (32 hex or REFUSED)
+         1     rule R: unused legacy checkpoint helper (no caller)
+static check (d18 draft5 checker, d18 draft4 tree): exit 0; STATIC-CHECK hits=0 allowed=24 files=19 lines=4656; hits by rule: N=0 P=0 Q=0 M=0 R=0
+static check (d18 draft5 checker, d17 tree): exit 0; STATIC-CHECK hits=0 allowed=24 files=19 lines=4656; hits by rule: N=0 P=0 Q=0 M=0 R=0
+  (earlier trees are reported as information only (hits by rule above); the new checker rules are proven by the harness self-test cases.)
+
+GENERATED: SHELLCHECK 0.11.0 -s bash, counts per code (gcc format, one line per finding)
+  -S warning: 134 findings: SC1010=1 SC2010=4 SC2034=77 SC2043=2 SC2088=2 SC2097=6 SC2098=6 SC2154=26 SC2155=1 SC2174=2 SC2194=1 SC2209=6 
+  -S warning, errors: 0
+  -S style (gcc format reports style and info as note): 505 notes: SC1003=1 SC1091=2 SC2012=7 SC2015=403 SC2016=72 SC2059=1 SC2086=7 SC2126=2 SC2143=1 SC2153=8 SC2329=1 
+  files checked: 22 (tool output: run dir evidence/shellcheck-*.txt)
+All shell files pass bash -n: 22 of 22
+
+GENERATED: SHA-256 (shell files + interface)
+6ebf7a4f7b03c40967b4c1d8e46265e98a24ee12c481bc94ac07c277e39e3911  UserSpace-audit.txt
+d8dc274c307ee4f84f5cdb216cda78bce6c48e0c2dd17c0f9c57b41ec39b07f9  UserSpace-preferences.txt
+a24f130061128997d9e73bcfd2e784e4be4540c026d00721b1b1b217ddfdb2f1  workstationadmin-lib.txt
+658aa3ad2db950b8f33f04b7ad3fb2f550e13e36c33ec7b60ce47f4935e74fde  workstationadmin-mod-accounts.txt
+894081fcec5f732651304cee2ecd9a2d84187ac6c9fd03ec62acbe983e49494c  workstationadmin-mod-admin-session.txt
+5e9d6c19150ce22f9ba96668f89e9f7abefa31df6e04bcc452da35dff36f51aa  workstationadmin-mod-apps.txt
+ce4b09c4df95f5e39ff7b5299895df0f74fe1fae63a430b52b1fa633318bda6a  workstationadmin-mod-ard.txt
+bb7901b2fde32f69b3815699a20f8fd8c1bb1f436e09d619a455e5435383199a  workstationadmin-mod-filevault.txt
+e12134c636119a81f7e8a6d101083d400a2b13e6d624653bbc5834c38300140f  workstationadmin-mod-firewall.txt
+f25d76331683cc64250fe42d5bd30e15bacf45e673d8a00112db8352368ffa3e  workstationadmin-mod-firstlogin.txt
+cef5738ca505717d6f28de273b2199f93bb10bc4202f2f907e4150eea0f9fd5a  workstationadmin-mod-gates.txt
+4767b4a2fa76b8ee1908e0b70147218000b0fb28178ea017c514695817ba7b66  workstationadmin-mod-names.txt
+5302846c1498585808fd45081efb171d7c4db3414821132cb68af14a450d285d  workstationadmin-mod-power.txt
+d2073e6121256f1dbed0c028b22877dd86f7009d69daeea15a70703c9dbff74b  workstationadmin-mod-preflight.txt
+26d8ccedb23a64b2baaadd85dbc1d14bb4124eab2e957b6e6df68627c0ec847f  workstationadmin-mod-shared.txt
+e1f21024d23d64dcfbdbfdda5509ab6afebf00b6b58c02a7a03c37cb44ded898  workstationadmin-mod-ssh.txt
+abb324574ed4bccd75ec5a5e9376b6925c96f1898bfe07203df23deea0289d97  workstationadmin-mod-updates.txt
+8c2815985e8bf55c08d1d9415043457f2a017c2a5302fe9afe6fef1451ecec5b  workstationadmin-mod-userprefs.txt
+a6262f1a32d246040182f8b0bba3c22d4a8d054f77d04e198de16fa59398dfb0  workstationadmin-provision.txt
+61051749a271cb16df45ee7ebe6c189f8f0ffdc79c26b2db9f2821d87d8b66d0  workstationadmin-scrub-check.txt
+79e2c02ab8437bc620b43d1902054e5a779670e51e18abbe85f71e3706552651  workstationadmin-static-check.txt
+8116f851edde1ae663e8c9fd01bceee67692568f933c42355f40aaf9014c5579  workstationadmin-test-harness.txt
+c4efce4f6e9ce9cb0531507406bbd722f027d000ffc00575a7ac696ec624f6f5  interface-plan-for-documentation.txt

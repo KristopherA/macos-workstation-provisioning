@@ -1,0 +1,239 @@
+#!/bin/bash
+# UserSpace-audit.txt - READ-ONLY provisioning audit (corrected suite version).
+# Derived from a separate earlier UserSpace-audit.txt (original
+# preserved unchanged, sha256 bb73385c...). Rewritten on the suite library to
+# resolve review findings B01-B12.
+# Account: the selected final TARGET user, in that user's own GUI console
+#   session, started by that user from Terminal. Identity binding: EUID and the
+#   console owner must both be the caller. Root/sudo: REFUSED (EUID check runs
+#   before any option, hook or external command). No elevation is used.
+# Changes nothing: no preference writes, installs, launchctl, prompts or sudo.
+# Never reads TCC or credential stores, recovery-key files, or Desktop,
+# Documents or Downloads content. Never prints user, host, home, asset tag,
+# serial or machine identifiers by default.
+# Usage (FUTURE, separately authorized operator work only):
+#   /bin/bash UserSpace-audit.txt [--output /abs/new-file.txt] [--plan-run ID]
+#        [--apply-run ID] [--allow-untested-os] [-h]
+# --allow-untested-os only marks results as untested-build; it never bypasses
+# the root, identity or session guards.
+# Exit: 0 complete, 2 incomplete, 3 FAILED present, 4 refused, 64 usage.
+# Status vocabulary: suite taxonomy plus UNKNOWN (observation not possible).
+# A stored preference match is PENDING_LOGIN evidence=stored-pref, never a pass.
+# ---- trusted bootstrap (CR01) ------------------------------------------
+# Runs before anything else: fixed PATH, readonly EUID check, then trust checks
+# on the suite directory, every ancestor and the library, using only absolute
+# tool paths. The fixture hook is honoured only off macOS, as non-root, under a
+# canonical /tmp path; otherwise it is refused, never silently relaxed.
+set +x +a   # no tracing; no allexport (D3-03)
+# d14 (reviewer S1): every function that exists at this point was imported from the caller's environment (exported BASH_FUNC_*) or
+# defined by a BASH_ENV startup file; none is trusted, so all are discarded before the first tool name is resolved. BASH_ENV
+# itself has already been read by this shell (it cannot be cleared in time); unsetting it only protects the child shells.
+for _wsp_f in $(compgen -A function); do unset -f "$_wsp_f"; done
+unset BASH_ENV ENV
+PATH=/usr/bin:/bin:/usr/sbin:/sbin; export PATH
+case "${EUID:-x}" in ''|*[!0-9]*) echo "REFUSED: EUID unreadable" >&2; exit 4;; esac
+_wsp_os=$(/usr/bin/uname -s 2>/dev/null || /bin/uname -s)
+_wsp_fx=0
+if [ -n "${WSP_FIXTURE_ROOT:-}" ]; then
+  if [ "$_wsp_os" = Darwin ] || [ -d /System/Library/CoreServices ] || [ "$EUID" -eq 0 ]; then echo "REFUSED: fixture hook not allowed here" >&2; exit 4; fi
+  _wsp_c=$(cd "$WSP_FIXTURE_ROOT" 2>/dev/null && pwd -P) || { echo "REFUSED: fixture root" >&2; exit 4; }
+  case "$_wsp_c" in /tmp/?*) ;; *) echo "REFUSED: fixture root must canonically be under /tmp" >&2; exit 4;; esac
+  [ "$_wsp_c" = "${WSP_FIXTURE_ROOT%/}" ] || { echo "REFUSED: fixture root has a symlink" >&2; exit 4; }
+  _wsp_fx=1
+fi
+# Inherited suite-internal variables are discarded, including their export
+# attribute (documentation D4-1): unset removes both. Only the validated fixture hook stays.
+for _wsp_v in $(compgen -v WSP_); do case "$_wsp_v" in WSP_FIXTURE_ROOT) ;; *) unset "$_wsp_v";; esac; done
+[ "$_wsp_fx" -eq 1 ] || unset WSP_FIXTURE_ROOT
+_wsp_st() { if [ "$_wsp_os" = Darwin ]; then /usr/bin/stat -f "$1" "$2"; else /usr/bin/stat -c "$3" "$2"; fi; }
+_wsp_noacl() { # deny by default (D3-01): "+" refuses; "@" needs a one-line "ls -lde"
+  _wsp_l=$(/bin/ls -ld "$1" 2>/dev/null) || return 1
+  _wsp_l=${_wsp_l%% *}
+  case "$_wsp_l" in
+    ??????????|??????????.) return 0;;
+    ??????????@) _wsp_n=$(/bin/ls -lde "$1" 2>/dev/null) || return 1
+                 [ "$(printf '%s\n' "$_wsp_n" | /usr/bin/wc -l | /usr/bin/tr -d ' ')" = 1 ];;
+    *) return 1;;
+  esac
+}
+_wsp_trust() { # path: not symlink, no ACL, owner root|workstationadmin (fixture: caller), not group/world writable
+  [ -L "$1" ] && return 1
+  _wsp_noacl "$1" || return 1
+  _wsp_o=$(_wsp_st %Su "$1" %U) || return 1; _wsp_m=$(_wsp_st %Lp "$1" %a) || return 1
+  case "$_wsp_o" in root|workstationadmin) ;; *) [ "$_wsp_fx" -eq 1 ] && [ "$_wsp_o" = "$(/usr/bin/id -un)" ] || return 1;; esac
+  case "$_wsp_m" in *[2367]?|*[2367]) case "$_wsp_m" in 1???) [ -d "$1" ] && [ "$1" != "$_wsp_dir" ] || return 1;; *) return 1;; esac;; esac
+  return 0
+}
+case "$0" in /*) _wsp_self="$0";; *) _wsp_self="$(pwd -P)/$0";; esac
+_wsp_dir=$(cd "${_wsp_self%/*}" 2>/dev/null && pwd -P) || { echo "REFUSED: suite directory" >&2; exit 4; }
+_wsp_a="$_wsp_dir"
+while :; do _wsp_trust "$_wsp_a" || { echo "REFUSED: untrusted suite directory or ancestor" >&2; exit 4; }; [ "$_wsp_a" = / ] && break; _wsp_a=${_wsp_a%/*}; [ -n "$_wsp_a" ] || _wsp_a=/; done
+_wsp_lib="$_wsp_dir/workstationadmin-lib.txt"
+if ! { [ -f "$_wsp_lib" ] && _wsp_trust "$_wsp_lib"; }; then echo "REFUSED: library missing or untrusted" >&2; exit 4; fi
+_wsp_trust "$_wsp_dir/${_wsp_self##*/}" || { echo "REFUSED: entry script untrusted" >&2; exit 4; }
+# Residual risk: a process running as root or workstationadmin can still replace
+# files between this check and use. Those identities are trusted by design.
+# shellcheck source=/dev/null
+. "$_wsp_lib"
+# Context guard for UserSpace- scripts (target user, own GUI session, no root).
+[ "$EUID" -ne 0 ] || wsp_refuse "must not run as root or with sudo"
+ctx=$(wsp_context_why target-gui); [ "$ctx" = ok ] || wsp_refuse "${ctx:-context check failed}"
+me=$(wsp_read_user) || wsp_refuse "identity unreadable or malformed"
+wsp_add_redact "$me"; wsp_add_redact "$HOME"
+wsp_add_host_redactions
+# Typed stored-preference reader (D3-05): no subshell, so the real exit and
+# error class survive. Sets PREF_VAL (value | unset | unknown), PREF_RC, PREF_EC.
+pref_get() { local _pv; wsp_run _pv defaults read "$1" "$2"; PREF_RC=$WSP_RC; PREF_EC=$WSP_ERRCLASS
+  if [ "$WSP_RC" -eq 0 ]; then PREF_VAL=$_pv; elif [ "$WSP_ERRCLASS" = not-found ]; then PREF_VAL=unset; else PREF_VAL=unknown; fi; }
+WSP_MODULE="userspace-audit"
+WSP_REPORT_TYPE="audit"
+WSP_MODE=inspect
+out=""; untested=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --output) [ $# -ge 2 ] || { echo "usage error" >&2; exit 64; }; out="$2"; shift 2;;
+    --plan-run) [ $# -ge 2 ] || exit 64; case "$2" in *[!0-9A-Za-z+-]*|'') echo "usage error: bad id" >&2; exit 64;; esac; WSP_LINK_PLAN="$2"; shift 2;;
+    --apply-run) [ $# -ge 2 ] || exit 64; case "$2" in *[!0-9A-Za-z+-]*|'') echo "usage error: bad id" >&2; exit 64;; esac; WSP_LINK_APPLY="$2"; shift 2;;
+    --allow-untested-os) untested=1; shift;;
+    -h|--help) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    *) echo "usage error: unknown option (value not echoed)" >&2; exit 64;;
+  esac
+done
+[ -n "$out" ] && wsp_open_report "$out"
+wsp_new_run_id
+wsp_header "$0"
+wsp_module_start
+os=$(wsp_os_major)
+arch=$(wsp_read_arch) || arch=""
+if [ -z "$os" ]; then
+  if [ "$untested" -ne 1 ]; then wsp_refuse "macOS version unreadable or malformed; use --allow-untested-os to audit as untested"; fi
+  os=unknown
+fi
+base=$(wsp_session_policy TARGET_OS_MAJOR) || base=""
+case "$base" in ''|*[!0-9]*) base="";; esac
+if [ -z "$base" ]; then
+  if [ "$untested" -ne 1 ]; then wsp_refuse "TARGET_OS_MAJOR not set in session policy; use --allow-untested-os to audit as untested"; fi
+  wsp_status UNSUPPORTED P01 os-baseline "baseline unset in session policy: all results unvalidated" unset "$os" effective-cli
+elif [ "$os" != "$base" ]; then
+  if [ "$untested" -ne 1 ]; then wsp_refuse "macOS major differs from policy baseline; use --allow-untested-os to audit as untested"; fi
+  wsp_status UNSUPPORTED P01 os-baseline "untested build: all results unvalidated" "$base" "$os" effective-cli
+else wsp_status ALREADY_CORRECT P01 os-baseline "major matches session policy baseline" "$base" "$os" effective-cli 0; fi
+# --- context ---
+wsp_status ALREADY_CORRECT R01 gui-context "caller owns console session (UID switch is not GUI)" target-console target-console effective-cli
+case "$(wsp_admin_state "$me")" in
+  yes) wsp_status ALREADY_CORRECT R04 role "target account is admin" admin admin record;;
+  no) wsp_status FAILED R04 role "target account is not admin (required)" admin standard record;;
+  *) wsp_status UNKNOWN R04 role "membership not determinable" admin unknown record;; esac
+o=$(wsp_stat_owner "$HOME" 2>/dev/null)
+if [ "$o" = "$me" ] && [ -d "$HOME/Library/Preferences" ]; then
+  wsp_status PENDING_LOGIN R04 home-observation "home owned and Library/Preferences exists; limited evidence, not full initialization proof" owned owned record
+else wsp_status UNKNOWN R04 home-observation "home ownership or Preferences not confirmed" owned unknown record; fi
+# --- operator account (fixed subject, not configurable) ---
+ostate=$(wsp_user_state "$WSP_OPERATOR") || ostate=unknown
+case "$ostate" in yes)
+  case "$(wsp_admin_state "$WSP_OPERATOR")" in
+    yes) wsp_status ALREADY_CORRECT R03 operator-admin "operator is admin" admin admin record;;
+    no) wsp_status FAILED R03 operator-admin "operator not admin" admin standard record;;
+    *) wsp_status UNKNOWN R03 operator-admin "membership not determinable" admin unknown record;; esac
+  ;;
+no) wsp_status FAILED R03 operator-record "operator record missing" present absent record;;
+*) wsp_status UNKNOWN R03 operator-record "operator record existence not determinable" present unknown record;; esac
+# --- names: shape only, values never printed ---
+lhn_re='^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$'
+wsp_run lhn scutil --get LocalHostName
+lh_ok=1; if [ "$WSP_RC" -eq 0 ]; then wsp_re "$lhn" "$lhn_re"; lh_ok=$?; fi
+if [ "$WSP_RC" -ne 0 ]; then wsp_status UNKNOWN R05 localhostname-shape "unreadable" network-safe unknown effective-cli "$WSP_RC" "$WSP_ERRCLASS"
+elif [ "$lh_ok" -eq 0 ]; then wsp_status PENDING_CONSENT R05 localhostname-shape "network-safe shape; policy match and uniqueness are manual (value not reported)" network-safe network-safe effective-cli 0
+elif [ "$lh_ok" -eq 2 ]; then wsp_status UNKNOWN R05 localhostname-shape "shape test could not be evaluated" network-safe unknown effective-cli 0 parse
+else wsp_status FAILED R05 localhostname-shape "not network-safe (value not reported)" network-safe invalid effective-cli 0; fi
+wsp_status PENDING_CONSENT R05 hostname-policy "HostName policy D07 is operator decision; not judged" "" "" manual
+# --- firewall: strict grammar ---
+wsp_run fw "$WSP_ROOT/usr/libexec/ApplicationFirewall/socketfilterfw" --getglobalstate
+if [ "$WSP_RC" -ne 0 ]; then wsp_status UNKNOWN R14 firewall "command failed" enabled unknown effective-cli "$WSP_RC" "$WSP_ERRCLASS"
+else case "$fw" in
+  "Firewall is enabled. (State = 1)"|"Firewall is enabled. (State = 2)") wsp_status PENDING_LOGIN R14 firewall "global state enabled; inbound acceptance manual" enabled enabled effective-cli 0;;
+  "Firewall is disabled. (State = 0)") wsp_status FAILED R14 firewall "global state disabled" enabled disabled effective-cli 0;;
+  *) wsp_status UNKNOWN R14 firewall "output not in known grammar" enabled unparsed effective-cli 0 parse;; esac; fi
+# --- SSH allowlist (record evidence only) ---
+wsp_run gm dscl . -read /Groups/com.apple.access_ssh GroupMembership
+rc1=$WSP_RC; ec1=$WSP_ERRCLASS
+wsp_run gn dscl . -read /Groups/com.apple.access_ssh NestedGroups
+rc2=$WSP_RC; ec2=$WSP_ERRCLASS
+if [ "$rc1" -ne 0 ]; then wsp_status UNKNOWN R42 ssh-allowlist "group or attribute unreadable/absent: allowlist not determinable" operator-only unknown record "$rc1" "$ec1"
+else
+  case "$gm" in "GroupMembership:"*) ;; *) gm="";; esac
+  wsp_words "${gm#GroupMembership:}"; mem=$WSP_WORDS
+  nest=1; if [ "$rc2" -eq 0 ]; then wsp_any_line_re "$gn" '^NestedGroups:.*[0-9A-Fa-f]'; nest=$?; fi
+  if [ "$rc2" -ne 0 ] && [ "$ec2" != not-found ]; then
+    wsp_status UNKNOWN R42 ssh-allowlist "nested-group attribute unreadable" operator-only unknown record "$rc2" "$ec2"
+  elif [ "$nest" -eq 2 ]; then
+    wsp_status UNKNOWN R42 ssh-allowlist "nested-group test could not be evaluated" operator-only unknown record 0 parse
+  elif [ "$nest" -eq 0 ]; then
+    wsp_status UNKNOWN R42 ssh-allowlist "nested groups present; effective membership not resolved (not a proven violation)" operator-only nested record 0
+  elif [ "$mem" = "$WSP_OPERATOR" ]; then wsp_status PENDING_CONSENT R42 ssh-allowlist "direct members: operator only (record); remote positive/negative tests pending" operator-only operator-only record 0
+  elif [ -z "$mem" ]; then wsp_status UNKNOWN R42 ssh-allowlist "no direct members read" operator-only empty record 0
+  else wsp_words "$mem"; n=$WSP_NWORDS; wsp_status FAILED R42 ssh-allowlist "direct members include other accounts (count only)" operator-only "members-$n" record 0; fi
+fi
+wsp_status PENDING_CONSENT R42 ssh-fda-and-tests "service state needs privilege; FDA toggle and remote tests are manual" "" "" manual
+wsp_status PENDING_CONSENT R15 ard "ARD privileges and rejection evidence need privileged read and controlled remote tests; not certified" "" "" manual
+# --- FileVault: status only ---
+wsp_run fv fdesetup status
+if [ "$WSP_RC" -ne 0 ]; then wsp_status UNKNOWN R18 fv-state "command failed" on unknown effective-cli "$WSP_RC" "$WSP_ERRCLASS"
+else case "$fv" in
+  "FileVault is On.") wsp_status PENDING_CONSENT R18 fv-state "On; unlock users, tokens, ownership and restart unlock are separate manual evidence" on on effective-cli 0;;
+  "FileVault is Off.") wsp_status FAILED R18 fv-state "Off" on off effective-cli 0;;
+  *) wsp_status UNKNOWN R18 fv-state "output not in known grammar (may be in progress)" on unparsed effective-cli 0 parse;; esac; fi
+wsp_status PENDING_CONSENT R19 key-export "audit never reads or locates the key file" "" "" manual
+# --- apps: executable + version + signature evidence ---
+applist=$(wsp_session_policy APP_LIST) || applist=""
+if [ -z "$applist" ]; then wsp_status BLOCKED_POLICY R11 app-list "APP_LIST not set in session.conf (operator config)" listed unset none
+elif ! wsp_app_list "$applist"; then wsp_status BLOCKED_POLICY R11 app-list "APP_LIST malformed" listed malformed none
+else
+_ifs=$IFS; set -f; IFS=$WSP_NL
+# shellcheck disable=SC2086 # intentional newline split of validated entries (globbing off)
+# NOTE: the next line replaces the positional parameters ($@); options were already parsed and $@ is not used again.
+set -- $WSP_APP_ENTRIES
+IFS=$_ifs; set +f
+for pair in "$@"; do
+  lbl=${pair%%|*}; _r=${pair#*|}; bundle=${_r%%|*}
+  ck=${lbl// /-}; app="$WSP_ROOT/Applications/$bundle.app"
+  if [ ! -d "$app" ]; then wsp_status FAILED R11 "app-$ck" "not installed" installed absent record; continue; fi
+  wsp_run ex defaults read "$app/Contents/Info" CFBundleExecutable; erc=$WSP_RC
+  wsp_run ver defaults read "$app/Contents/Info" CFBundleShortVersionString; vrc=$WSP_RC
+  if [ "$erc" -ne 0 ] || [ -z "$ex" ] || [ ! -x "$app/Contents/MacOS/$ex" ] || [ "$vrc" -ne 0 ] || [ -z "$ver" ]; then
+    wsp_status UNKNOWN R11 "app-$ck" "executable or version evidence missing" exe+version missing record; continue; fi
+  wsp_run lip lipo -archs "$app/Contents/MacOS/$ex"
+  if [ "$WSP_RC" -ne 0 ] || [ -z "$arch" ]; then a=unknown; else case " $lip " in *" $arch "*) a=ok;; *) a=no;; esac; fi
+  wsp_run cs codesign --verify --strict "$app"; c=$WSP_RC
+  if [ "$c" -eq 0 ] && [ "$a" = ok ]; then wsp_status PENDING_LOGIN R11 "app-$ck" "signature valid, arch ok; vendor provenance and first launch manual" signed-arch "signed-arch:$ver" effective-cli 0
+  else wsp_status UNKNOWN R11 "app-$ck" "signature or arch evidence not confirmed" signed-arch "c$c-a$a" effective-cli "$c" "$WSP_ERRCLASS"; fi
+done
+fi
+# --- shared resources: exact approved names only ---
+items=$(wsp_session_policy SHARED_ITEMS) || items=""
+if [ -z "$items" ]; then wsp_status BLOCKED_POLICY R10 shared "approved exact item list not provided (D10)" "" "" none
+else i=0; oldifs=$IFS; IFS=':'; for it in $items; do IFS=$oldifs; i=$((i+1))
+  p="$WSP_ROOT/Users/Shared/$it"
+  if [ -L "$p" ]; then wsp_status FAILED R10 "item$i" "is a symlink" readable symlink record
+  elif [ ! -e "$p" ]; then wsp_status FAILED R10 "item$i" "approved item absent" readable absent record
+  elif [ -r "$p" ]; then wsp_status ALREADY_CORRECT R10 "item$i" "exists and readable by caller" readable readable effective-cli
+  else wsp_status FAILED R10 "item$i" "not readable by caller" readable denied effective-cli; fi
+  IFS=':'; done; IFS=$oldifs; fi
+# --- stored preferences (never effective proof) ---
+pchk() { pref_get "$3" "$4"; v=$PREF_VAL
+  if [ "$v" = "unknown" ]; then wsp_status UNKNOWN "$1" "$2" "preference unreadable" "$5" unknown stored-pref "$PREF_RC" "$PREF_EC"
+  elif [ "$v" = "unset" ]; then wsp_status UNKNOWN "$1" "$2" "not stored (default may apply; visible check manual)" "$5" unset stored-pref "$PREF_RC" "$PREF_EC"
+  elif [ "$v" = "$5" ]; then wsp_status PENDING_LOGIN "$1" "$2" "stored value matches (T mapping); visible behaviour manual" "$5" "$v" stored-pref "$PREF_RC"
+  else wsp_status UNKNOWN "$1" "$2" "stored value differs (T mapping; not proven negative)" "$5" differs stored-pref "$PREF_RC"; fi; }
+pchk R21 scrollbars NSGlobalDomain AppleShowScrollBars Always
+pchk R22 clock24 NSGlobalDomain AppleICUForce24HourTime 1
+pchk R26 titlebar NSGlobalDomain AppleActionOnDoubleClick Minimize
+pchk R08 finder-pathbar com.apple.finder ShowPathbar 1
+pchk R08 finder-statusbar com.apple.finder ShowStatusBar 1
+pchk R08 finder-trash30 com.apple.finder FXRemoveOldTrashItems 1
+pchk R39 tap-to-click com.apple.AppleMultitouchTrackpad Clicking 1
+wsp_status PENDING_LOGIN R13 dock "visible Dock order and URL destinations: manual" "" "" manual
+wsp_status PENDING_CONSENT R42 ssh-groupmembers-guid "GUID membership (GroupMembers) not evaluated by this audit" "" "" none
+# Requirements this audit does not cover are listed explicitly, never implied PASS (CR10).
+for r in R02 R06 R07 R09 R12 R16 R17 R20 R23 R24 R25 R27 R28 R29 R30 R31 R32 R33 R34 R35 R36 R37 R38 R40 R41; do wsp_status UNSUPPORTED "$r" not-audited "not covered by UserSpace-audit; see operator reports and manual checklist" "" "" none; done
+wsp_finish

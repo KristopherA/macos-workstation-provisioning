@@ -1,0 +1,153 @@
+#!/bin/bash
+# workstationadmin-scrub-check - public-repo scrub (rule of 2026-11-09).
+# Author/test-runner tooling. Reads text only, executes nothing it scans.
+# Fails when suite files carry employer/site-specific values. Site-specific
+# patterns are NOT in the suite: they are read from a local file outside it.
+# Usage: bash workstationadmin-scrub-check.txt DIR [--site-file FILE]
+#                                              [--generic-only] [--strict-docs] [--expect-exempt N]
+# RELEASE GATE (d11): run on a clean export of the repository with the site file AND
+#   --strict-docs, never --generic-only:
+#     bash workstationadmin-scrub-check.txt EXPORT_DIR --site-file FILE --strict-docs --expect-exempt N
+#   (N = the number of exemption-token lines the check itself carries, printed as exempt=N; a different
+#   count is a HIT).
+#   Site file: one ERE per line (# comments and blank lines ignored; a CRLF line ending is
+#   tolerated), matched case-insensitively. Default: $WSP_SCRUB_PATTERNS, else
+#   $HOME/.config/wsp-scrub/site-patterns.txt. Missing/unreadable/empty file, or any
+#   pattern that is not a valid ERE, or has a leading/trailing blank or a BOM = exit 3
+#   (fail closed), named only by its number.
+#   --generic-only runs the built-in rules only and says so in the summary.
+# Traversal: every regular file below DIR is scanned, including dotfiles and hidden or
+#   nested directories. A symlink, device, FIFO, socket or a .git entry is a HIT (refused,
+#   not skipped): scan an export (git archive), not a working repository.
+# Built-in rules (generic, no site knowledge):
+#   IP    an IPv4 literal outside 10.0.0.x, RFC 5737 (192.0.2.x, 198.51.100.x,
+#         203.0.113.x), 127.x, 0.0.0.0
+#   MAIL  an e-mail address not at (sub)domains of example.com/.org/.net, *.test, *.invalid
+#         (a personal or noreply address is a HIT: it belongs in commit metadata only)
+#   HOST  a URL or www. host that is not (a subdomain of) example.com/.org/.net, *.test,
+#         *.invalid, localhost, or an apple.com documentation host
+#   VEND  the vendor words chrome, zoom, webex (generic text must not name vendors) # scrub-allow
+# A line carrying the exemption token (the word scrub, a hyphen, then allow) is exempt ONLY in the
+# file named in EXEMPT_FILES below (this check itself: its own rule text). In any
+# other file the token is itself a HIT (exempt-token-misuse) and the line is scanned normally.
+# The summary prints exempt=N; --expect-exempt N makes a different count a HIT (release gate:
+# assert the expected N, so a newly exempted line cannot pass unnoticed).
+# Output never prints the matched text (a site pattern would leak it): only
+# path:line and the rule / pattern number. A file whose NAME matches a site pattern is shown as
+# entry#K (K = its ordinal in the traversal) in every hit, so the name itself never prints. Exit: 0 clean, 1 hits, 3 setup or tool failure
+# (a grep status above 1, an awk/find/mktemp failure).
+# documentation-*.txt belong to the documentation owner: their hits are reported as DOCHIT and
+# fail only with --strict-docs.
+set -u
+EXEMPT_FILES=" workstationadmin-scrub-check.txt "
+EXPECT=""; D=""; SITE="${WSP_SCRUB_PATTERNS:-${HOME:-/nonexistent}/.config/wsp-scrub/site-patterns.txt}"; GEN=0; STRICT=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --site-file) shift; SITE="${1:-}";;
+    --generic-only) GEN=1;;
+    --strict-docs) STRICT=1;;
+    --expect-exempt) shift; EXPECT="${1:-}"; case "$EXPECT" in ''|*[!0-9]*) echo "usage error" >&2; exit 3;; esac;;
+    -*) echo "usage error" >&2; exit 3;;
+    *) D="$1";;
+  esac; shift
+done
+[ -d "$D" ] || { echo "usage: DIR required" >&2; exit 3; }
+TMP=$(mktemp -d "${TMPDIR:-/tmp}/wsp-scrub.XXXXXX") || { echo "SCRUB-SETUP no temp dir"; exit 3; }
+trap 'rm -rf "$TMP"' EXIT
+D=$(cd "$D" && pwd -P) || { echo "SCRUB-SETUP cannot enter directory"; exit 3; }
+NP=0; : > "$TMP/pats"
+if [ "$GEN" -eq 0 ]; then
+  if [ ! -r "$SITE" ] || [ ! -f "$SITE" ]; then echo "SCRUB-SETUP site-patterns file missing or unreadable (use --generic-only to run built-in rules only)"; exit 3; fi
+  sd=$(cd "$(dirname "$SITE")" 2>/dev/null && pwd -P) || { echo "SCRUB-SETUP site-patterns directory unreadable"; exit 3; }
+  case "$sd/" in "$D"/*) echo "SCRUB-SETUP site-patterns file must live outside the scanned directory"; exit 3;; esac
+  while IFS= read -r p || [ -n "$p" ]; do
+    p=${p%$'\r'}
+    case "$p" in '#'*) continue;; esac
+    [ -n "${p//[[:space:]]/}" ] || continue
+    NP=$((NP+1))
+    case "$p" in " "*|*" "|$'\t'*|*$'\t'|$'\xef\xbb\xbf'*) echo "SCRUB-SETUP site pattern #$NP has a leading or trailing blank, or a BOM (pattern text not shown)"; exit 3;; esac
+    printf '' | grep -E -e "$p" >/dev/null 2>&1; rc=$?
+    if [ "$rc" -gt 1 ]; then echo "SCRUB-SETUP site pattern #$NP is not a valid ERE (pattern text not shown)"; exit 3; fi
+    printf '%s\n' "$p" >> "$TMP/pats"
+  done < "$SITE"
+  [ "$NP" -gt 0 ] || { echo "SCRUB-SETUP site-patterns file has no patterns"; exit 3; }
+fi
+find "$D" -mindepth 1 -print0 > "$TMP/list" 2>/dev/null || { echo "SCRUB-SETUP directory traversal failed"; exit 3; }
+hits=0; dochits=0; nfiles=0
+hit() { # label text
+  if [ "$1" = DOC ]; then dochits=$((dochits+1)); printf 'DOCHIT %s\n' "$2"; else hits=$((hits+1)); printf 'HIT %s\n' "$2"; fi; }
+hits=0; dochits=0; nfiles=0; ent=0; exempt=0
+while IFS= read -r -d '' f; do
+  rel=${f#"$D"/}; lab=""; ent=$((ent+1)); disp=$rel; bn=$(basename "$rel") || { echo "SCRUB-SETUP basename failed"; exit 3; }
+  case "$bn" in documentation-*) lab=DOC;; esac
+  # name patterns first: a matching name is never printed (entry#K instead)
+  if [ "$NP" -gt 0 ]; then
+    printf '%s\n' "$rel" > "$TMP/name"
+    n=0; while IFS= read -r p; do n=$((n+1))
+      grep -Eiq -e "$p" "$TMP/name"; rc=$?
+      if [ "$rc" -gt 1 ]; then echo "SCRUB-SETUP grep failed on name check (pattern #$n)"; exit 3; fi
+      if [ "$rc" -eq 0 ]; then hit "$lab" "entry#$ent name pattern#$n"; disp="entry#$ent"; fi
+    done < "$TMP/pats"
+  fi
+  case "/$rel/" in */.git/*) hit "$lab" "$disp git-metadata (scan an export, not a repository)"; continue;; esac
+  if [ -L "$f" ]; then hit "$lab" "$disp symlink"; continue; fi
+  if [ -d "$f" ]; then continue; fi
+  if [ ! -f "$f" ]; then hit "$lab" "$disp non-regular-file"; continue; fi
+  nfiles=$((nfiles+1))
+  okx=0; case "$EXEMPT_FILES" in *" $rel "*) okx=1;; esac   # matched on the RELATIVE path (d11), not the base name
+  # normalised copy (CRLF -> LF), status checked
+  awk '{ sub(/\r$/, ""); print }' "$f" > "$TMP/norm" || { echo "SCRUB-SETUP awk failed reading a file"; exit 3; }
+  awk -v B="$disp" -v OKX="$okx" -v EXF="$TMP/ex.n" '
+    function ipok(a,b,c,d) {
+      if (a==10 && b==0 && c==0) return 1
+      if (a==192 && b==0 && c==2) return 1
+      if (a==198 && b==51 && c==100) return 1
+      if (a==203 && b==0 && c==113) return 1
+      if (a==127) return 1
+      if (a==0 && b==0 && c==0 && d==0) return 1
+      return 0 }
+    /scrub-allow/ { if (OKX == 1) { ex++; next } else printf "%s:%d exempt-token-misuse\n", B, NR }
+    {
+      s=$0
+      t=s
+      while (match(t, /(^|[^0-9.])[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+([^0-9]|$)/)) {
+        m=substr(t,RSTART,RLENGTH); gsub(/[^0-9.]/,"",m)
+        split(m,o,".")
+        if (o[1]<=255 && o[2]<=255 && o[3]<=255 && o[4]<=255 && !ipok(o[1]+0,o[2]+0,o[3]+0,o[4]+0)) { printf "%s:%d IP\n", B, NR }
+        t=substr(t,RSTART+RLENGTH-1) }
+      t=s
+      while (match(t, /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]+/)) {
+        m=substr(t,RSTART,RLENGTH); sub(/^[^@]*@/,"",m); m=tolower(m)
+        if (m !~ /(^|\.)example\.(com|org|net)$/ && m !~ /\.(test|invalid)$/) printf "%s:%d MAIL\n", B, NR
+        t=substr(t,RSTART+RLENGTH) }
+      t=s
+      while (match(t, /(https?:\/\/|www\.)[A-Za-z0-9.-]+/)) {
+        m=substr(t,RSTART,RLENGTH); sub(/^https?:\/\//,"",m); m=tolower(m); sub(/^www\./,"",m)
+        if (m != "" && m !~ /^localhost$/ && m !~ /(^|\.)example\.(com|org|net)$/ && m !~ /\.(test|invalid)$/ && m !~ /(^|\.)apple\.com$/) printf "%s:%d HOST\n", B, NR
+        t=substr(t,RSTART+RLENGTH) }
+      if (tolower(s) ~ /(^|[^a-z])(chrome|zoom|webex)([^a-z]|$)/) printf "%s:%d VEND\n", B, NR   # scrub-allow
+    }
+    END { print ex+0 > EXF; close(EXF) }' "$TMP/norm" > "$TMP/gen" || { echo "SCRUB-SETUP awk failed scanning a file"; exit 3; }
+  # d11 (S9): the exempt count travels in its own file, never in the hit stream, so no file name can forge it
+  IFS= read -r exn < "$TMP/ex.n" || { echo "SCRUB-SETUP exempt count unreadable"; exit 3; }
+  case "$exn" in ''|*[!0-9]*) echo "SCRUB-SETUP exempt count not numeric"; exit 3;; esac
+  exempt=$((exempt + exn))
+  while IFS= read -r g; do
+    case "$g" in '') ;; *) hit "$lab" "$g";; esac
+  done < "$TMP/gen"
+  # site patterns
+  if [ "$NP" -gt 0 ]; then
+    n=0; while IFS= read -r p; do n=$((n+1))
+      grep -Ein -e "$p" "$TMP/norm" > "$TMP/g1"; rc=$?
+      if [ "$rc" -gt 1 ]; then echo "SCRUB-SETUP grep failed scanning a file (pattern #$n)"; exit 3; fi
+      if [ "$rc" -eq 0 ]; then while IFS=: read -r ln _; do hit "$lab" "$disp:$ln site-pattern#$n"; done < "$TMP/g1"; fi
+    done < "$TMP/pats"
+  fi
+done < "$TMP/list"
+if [ "$nfiles" -lt 1 ] && [ "$hits" -eq 0 ] && [ "$dochits" -eq 0 ]; then echo "SCRUB-SETUP no files found to scan"; exit 3; fi
+mode="site-patterns"; [ "$GEN" -eq 1 ] && mode="GENERIC-ONLY (no site patterns)"
+if [ -n "$EXPECT" ] && [ "$exempt" -ne "$EXPECT" ]; then hits=$((hits+1)); echo "HIT exempt-count expected=$EXPECT got=$exempt"; fi
+echo "SCRUB-CHECK hits=$hits dochits=$dochits files=$nfiles exempt=$exempt mode=$mode strict-docs=$STRICT"
+[ "$hits" -eq 0 ] || exit 1
+[ "$STRICT" -eq 0 ] || [ "$dochits" -eq 0 ] || exit 1
+exit 0

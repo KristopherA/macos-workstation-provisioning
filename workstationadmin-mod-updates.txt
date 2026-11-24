@@ -1,0 +1,154 @@
+#!/bin/bash
+# workstationadmin-mod-updates.txt - updates, Gatekeeper R16 R17 R20 (apply: update preferences only; never installs or restarts)
+# Account: workstationadmin via launcher.
+# Root: required (sudo) for apply and for privileged reads.
+# Bash 3.2, stock macOS tools only.
+# Dry run (inspect) is the default; changes happen only with --mode apply.
+# No secret is ever accepted as an argument, written to a log or reported.
+# Requirements: R16 (update settings), R17 (Gatekeeper, read only), R20. Root: required for apply.
+# D10 (STEP 2, module 1): the SOFTWARE UPDATES writer is restored. It changes ONLY these stored
+# preferences, with "defaults write -bool" as root, after a checked backup of the plist and with
+# a read-back through the typed reader wsp_pref_read:
+#   com.apple.SoftwareUpdate  AutomaticCheckEnabled  AutomaticDownload  ConfigDataInstall
+#                             CriticalUpdateInstall  AutomaticallyInstallMacOSUpdates
+#   com.apple.commerce        AutoUpdate               (App Store app updates)
+# The wanted values come from operator policy (policy.conf), never from built-in defaults:
+#   UPDATES_AUTO_CHECK UPDATES_AUTO_DOWNLOAD UPDATES_CONFIG_DATA UPDATES_CRITICAL
+#   UPDATES_APP_STORE                      each: ONLY "on" (d11: the owner decided that these
+#                                          security-update settings always stay on; "off" is BLOCKED_POLICY)
+#   UPDATES_MACOS_INSTALL                  ONLY "off" (R16 keeps automatic macOS install off)
+# An unset, malformed or not-allowed value -> BLOCKED_POLICY for that setting; nothing is written for it.
+# A managed profile (software update, App Store, restrictions or custom-settings payload) or any MDM
+# enrollment is reported (BLOCKED_POLICY) and never overridden; an unreadable or unclassifiable profile
+# state is UNKNOWN and nothing is written. Each apply reports the backup directory (d12: the full path in the
+# backup= field of the record, the last component in the detail); there is no
+# automatic rollback (restore by copying the backup plist back as root, see the interface). This module NEVER installs updates, never restarts,
+# never calls softwareupdate with an install, restart or schedule-change verb (only the
+# read-only "softwareupdate --schedule"), and never touches an Apple Account or any paid action.
+# ---- trusted bootstrap (CR01) ------------------------------------------
+# Runs before anything else: fixed PATH, readonly EUID check, then trust checks
+# on the suite directory, every ancestor and the library, using only absolute
+# tool paths. The fixture hook is honoured only off macOS, as non-root, under a
+# canonical /tmp path; otherwise it is refused, never silently relaxed.
+set +x +a   # no tracing; no allexport (D3-03)
+# d14 (reviewer S1): every function that exists at this point was imported from the caller's environment (exported BASH_FUNC_*) or
+# defined by a BASH_ENV startup file; none is trusted, so all are discarded before the first tool name is resolved. BASH_ENV
+# itself has already been read by this shell (it cannot be cleared in time); unsetting it only protects the child shells.
+for _wsp_f in $(compgen -A function); do unset -f "$_wsp_f"; done
+unset BASH_ENV ENV
+PATH=/usr/bin:/bin:/usr/sbin:/sbin; export PATH
+case "${EUID:-x}" in ''|*[!0-9]*) echo "REFUSED: EUID unreadable" >&2; exit 4;; esac
+_wsp_os=$(/usr/bin/uname -s 2>/dev/null || /bin/uname -s)
+_wsp_fx=0
+if [ -n "${WSP_FIXTURE_ROOT:-}" ]; then
+  if [ "$_wsp_os" = Darwin ] || [ -d /System/Library/CoreServices ] || [ "$EUID" -eq 0 ]; then echo "REFUSED: fixture hook not allowed here" >&2; exit 4; fi
+  _wsp_c=$(cd "$WSP_FIXTURE_ROOT" 2>/dev/null && pwd -P) || { echo "REFUSED: fixture root" >&2; exit 4; }
+  case "$_wsp_c" in /tmp/?*) ;; *) echo "REFUSED: fixture root must canonically be under /tmp" >&2; exit 4;; esac
+  [ "$_wsp_c" = "${WSP_FIXTURE_ROOT%/}" ] || { echo "REFUSED: fixture root has a symlink" >&2; exit 4; }
+  _wsp_fx=1
+fi
+# Inherited suite-internal variables are discarded, including their export
+# attribute (documentation D4-1): unset removes both. Only the validated fixture hook stays.
+for _wsp_v in $(compgen -v WSP_); do case "$_wsp_v" in WSP_FIXTURE_ROOT) ;; *) unset "$_wsp_v";; esac; done
+[ "$_wsp_fx" -eq 1 ] || unset WSP_FIXTURE_ROOT
+_wsp_st() { if [ "$_wsp_os" = Darwin ]; then /usr/bin/stat -f "$1" "$2"; else /usr/bin/stat -c "$3" "$2"; fi; }
+_wsp_noacl() { # deny by default (D3-01): "+" refuses; "@" needs a one-line "ls -lde"
+  _wsp_l=$(/bin/ls -ld "$1" 2>/dev/null) || return 1
+  _wsp_l=${_wsp_l%% *}
+  case "$_wsp_l" in
+    ??????????|??????????.) return 0;;
+    ??????????@) _wsp_n=$(/bin/ls -lde "$1" 2>/dev/null) || return 1
+                 [ "$(printf '%s\n' "$_wsp_n" | /usr/bin/wc -l | /usr/bin/tr -d ' ')" = 1 ];;
+    *) return 1;;
+  esac
+}
+_wsp_trust() { # path: not symlink, no ACL, owner root|workstationadmin (fixture: caller), not group/world writable
+  [ -L "$1" ] && return 1
+  _wsp_noacl "$1" || return 1
+  _wsp_o=$(_wsp_st %Su "$1" %U) || return 1; _wsp_m=$(_wsp_st %Lp "$1" %a) || return 1
+  case "$_wsp_o" in root|workstationadmin) ;; *) [ "$_wsp_fx" -eq 1 ] && [ "$_wsp_o" = "$(/usr/bin/id -un)" ] || return 1;; esac
+  case "$_wsp_m" in *[2367]?|*[2367]) case "$_wsp_m" in 1???) [ -d "$1" ] && [ "$1" != "$_wsp_dir" ] || return 1;; *) return 1;; esac;; esac
+  return 0
+}
+case "$0" in /*) _wsp_self="$0";; *) _wsp_self="$(pwd -P)/$0";; esac
+_wsp_dir=$(cd "${_wsp_self%/*}" 2>/dev/null && pwd -P) || { echo "REFUSED: suite directory" >&2; exit 4; }
+_wsp_a="$_wsp_dir"
+while :; do _wsp_trust "$_wsp_a" || { echo "REFUSED: untrusted suite directory or ancestor" >&2; exit 4; }; [ "$_wsp_a" = / ] && break; _wsp_a=${_wsp_a%/*}; [ -n "$_wsp_a" ] || _wsp_a=/; done
+_wsp_lib="$_wsp_dir/workstationadmin-lib.txt"
+if ! { [ -f "$_wsp_lib" ] && _wsp_trust "$_wsp_lib"; }; then echo "REFUSED: library missing or untrusted" >&2; exit 4; fi
+_wsp_trust "$_wsp_dir/${_wsp_self##*/}" || { echo "REFUSED: entry script untrusted" >&2; exit 4; }
+# Residual risk: a process running as root or workstationadmin can still replace
+# files between this check and use. Those identities are trusted by design.
+# shellcheck source=/dev/null
+. "$_wsp_lib"
+WSP_MODULE="updates"
+WSP_GATE_NEEDS=root
+wsp_parse_mode "$@"
+SU=/Library/Preferences/com.apple.SoftwareUpdate
+CM=/Library/Preferences/com.apple.commerce
+BACKED=" "; REFUSED=" "
+wsp_profile_state
+setkey() { # domain key policykey req
+  local dom=$1 key=$2 pol=$3 req=$4 pv want wb have set_rc lab need bkn bkp
+  lab=$key; [ "$key" = AutomaticallyInstallMacOSUpdates ] && lab=AutoInstallOSUpdates   # the 32-char key would read as an opaque token and "Mac" can be a redacted host-name word
+  pv=$(wsp_policy "$pol") || pv=""
+  case "$pv" in
+    on) want=on; wb=true;;
+    off) want=off; wb=false;;
+    '') wsp_status BLOCKED_POLICY "$req" "$lab" "policy $pol unset; nothing is changed" "" unset record; return;;
+    *) wsp_status BLOCKED_POLICY "$req" "$lab" "policy $pol malformed (value not echoed); nothing is changed" "" malformed record; return;;
+  esac
+  need=on; [ "$pol" = UPDATES_MACOS_INSTALL ] && need=off
+  if [ "$want" != "$need" ]; then
+    wsp_status BLOCKED_POLICY "$req" "$lab" "R16 keeps this setting $need; policy asks otherwise; nothing is changed" "$need" "$want" record; return; fi
+  wsp_pref_read "$dom" "$key"; have=$WSP_PREF
+  if [ "$have" = unknown ]; then wsp_status UNKNOWN "$req" "$lab" "preference unreadable or not in the expected form; nothing is changed" "$want" unknown stored-pref "$WSP_PREF_RC" "$WSP_PREF_CLASS"; return; fi
+  if [ "$WSP_PROF" = unknown ]; then wsp_status UNKNOWN "$req" "$lab" "management state unreadable; nothing is changed" "$want" "$have" stored-pref; return; fi
+  if [ "$WSP_PROF" = managed ]; then wsp_status BLOCKED_POLICY "$req" "$lab" "managed profile controls software update; reported, never overridden" "$want" "$have" stored-pref; return; fi
+  if [ "$have" = "$want" ]; then eff_check "$key" "$lab" "$want" "$req" ALREADY_CORRECT "stored value matches"; return; fi
+  if [ "$WSP_MODE" != apply ]; then wsp_status PROPOSED "$req" "$lab" "would set (apply mode, root, after backup)" "$want" "$have" stored-pref; return; fi
+  # ONE checked backup per preference file and run, taken before the first write to it (a later
+  # key must not overwrite the pristine copy with a half-changed file).
+  case "$REFUSED" in *" $dom "*) wsp_status FAILED "$req" "$lab" "backup or identity check of this preference file failed earlier in this run; nothing written" "$want" "$have" stored-pref; return;; esac
+  case "$BACKED" in *" $dom:"*) ;; *)
+    if ! wsp_backup "$WSP_ROOT$dom.plist"; then REFUSED="$REFUSED$dom "; wsp_status FAILED "$req" "$lab" "backup of the preference file failed or was refused; nothing written" "$want" "$have" stored-pref; return; fi
+    BACKED="$BACKED$dom:$WSP_BACKUP_DIR "
+    # right before the first write: the file must still be exactly what was backed up
+    if ! wsp_backup_check "$WSP_ROOT$dom.plist"; then REFUSED="$REFUSED$dom "; wsp_status FAILED "$req" "$lab" "the preference file changed between backup and write; nothing written" "$want" "$have" stored-pref; return; fi;; esac
+  bkp=${BACKED#*" $dom:"}; bkp=${bkp%% *}; bkn=${bkp##*/}   # d12: the report carries the FULL backup path (backup= field) and the last component in the detail
+  wsp_run x defaults write "$dom" "$key" -bool "$wb"; set_rc=$WSP_RC
+  wsp_pref_read "$dom" "$key"
+  if [ "$set_rc" -eq 0 ] && [ "$WSP_PREF" = "$want" ]; then eff_check "$key" "$lab" "$want" "$req" CHANGED_VERIFIED "written and read back; backup $bkn" "$bkp"
+  else wsp_status FAILED "$req" "$lab" "write failed or read-back mismatch; backup $bkn" "$want" "$WSP_PREF" stored-pref "$set_rc" "" "$bkp"; fi
+}
+eff_check() { # key label want req okstatus detail [backupdir]: AutomaticCheckEnabled is also cross-checked with softwareupdate --schedule
+  if [ "$1" != AutomaticCheckEnabled ]; then wsp_status "$5" "$4" "$2" "$6 (stored value; effective view is a separate check)" "$3" "$3" stored-pref "" "" "${7:-}"; return; fi
+  wsp_su_schedule
+  if [ "$WSP_SCHED" = "$3" ]; then wsp_status "$5" "$4" "$2" "$6; softwareupdate --schedule agrees" "$3" "$3" effective-cli "" "" "${7:-}"
+  elif [ "$WSP_SCHED" = unknown ]; then wsp_status UNKNOWN "$4" "$2" "$6, but softwareupdate --schedule is unreadable" "$3" unknown effective-cli "" "" "${7:-}"
+  else wsp_status FAILED "$4" "$2" "$6, but softwareupdate --schedule disagrees" "$3" "$WSP_SCHED" effective-cli "" "" "${7:-}"; fi
+}
+setkey "$SU" AutomaticCheckEnabled UPDATES_AUTO_CHECK R16
+setkey "$SU" AutomaticDownload UPDATES_AUTO_DOWNLOAD R16
+setkey "$SU" ConfigDataInstall UPDATES_CONFIG_DATA R16
+setkey "$SU" CriticalUpdateInstall UPDATES_CRITICAL R16
+setkey "$SU" AutomaticallyInstallMacOSUpdates UPDATES_MACOS_INSTALL R16
+setkey "$CM" AutoUpdate UPDATES_APP_STORE R16
+case "$WSP_PROF" in
+  none) wsp_status ALREADY_CORRECT R16 management-overrides "empty profile listing and no MDM enrollment" none none effective-cli;;
+  managed) wsp_status BLOCKED_POLICY R16 management-overrides "a profile payload or an MDM enrollment may control update settings; read deferral and deadline from the MDM console" none managed effective-cli;;
+  *) wsp_status UNKNOWN R16 management-overrides "profile or enrollment state unreadable or not classified; nothing is changed" none unknown effective-cli;;
+esac
+wsp_status PENDING_CONSENT R16 rollback-manual "no automatic rollback: restore by copying the reported backup plist back as root (see the interface)" "" "" manual
+wsp_status PENDING_LOGIN R16 effective-settings-view "confirm the toggles in System Settings, General, Software Update (stored values only were read back)" "" "" manual
+wsp_status PENDING_CONSENT R16 update-install "no update is installed and nothing restarts: R16 is not install authorization; use Settings" "" "" manual
+wsp_run gk spctl --status
+# "enabled" is accepted only with exit 0; "disabled" text is accepted with any
+# exit (spctl may exit nonzero when disabled); anything else is UNKNOWN (B07).
+if [ "$WSP_RC" -ne 0 ] && [ "$gk" != "assessments disabled" ]; then wsp_status UNKNOWN R17 gatekeeper "spctl failed or output not trusted" enabled unknown effective-cli "$WSP_RC" "$WSP_ERRCLASS"
+else case "$gk" in "assessments enabled") wsp_status ALREADY_CORRECT R17 gatekeeper "assessments enabled (never disabled by suite)" enabled enabled effective-cli "$WSP_RC";;
+  "assessments disabled") wsp_status FAILED R17 gatekeeper "assessments disabled; operator restores in Settings (suite does not change it)" enabled disabled effective-cli "$WSP_RC";;
+  *) wsp_status UNKNOWN R17 gatekeeper "output not in known grammar" enabled unparsed effective-cli "$WSP_RC" parse;; esac; fi
+wsp_status PENDING_CONSENT R17 signed-app-assessment "assess one signed app with spctl -a -vv during verify (see apps module)" "" "" manual
+wsp_status UNSUPPORTED R20 admin-auth-system-settings "no documented current control mapped; record in Settings manually" "" "" manual
+wsp_finish

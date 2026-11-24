@@ -1,0 +1,103 @@
+#!/bin/bash
+# workstationadmin-mod-power.txt - display sleep R28
+# Account: workstationadmin via launcher.
+# Root: required (sudo) for apply.
+# Bash 3.2, stock macOS tools only.
+# Dry run (inspect) is the default; changes happen only with --mode apply.
+# No secret is ever accepted as an argument, written to a log or reported.
+# Requirements: R28 system part. Root: required for apply. pmset is documented.
+# No system-sleep value is set (not specified). Saver/lock delay: UserSpace.
+# ---- trusted bootstrap (CR01) ------------------------------------------
+# Runs before anything else: fixed PATH, readonly EUID check, then trust checks
+# on the suite directory, every ancestor and the library, using only absolute
+# tool paths. The fixture hook is honoured only off macOS, as non-root, under a
+# canonical /tmp path; otherwise it is refused, never silently relaxed.
+set +x +a   # no tracing; no allexport (D3-03)
+# d14 (reviewer S1): every function that exists at this point was imported from the caller's environment (exported BASH_FUNC_*) or
+# defined by a BASH_ENV startup file; none is trusted, so all are discarded before the first tool name is resolved. BASH_ENV
+# itself has already been read by this shell (it cannot be cleared in time); unsetting it only protects the child shells.
+for _wsp_f in $(compgen -A function); do unset -f "$_wsp_f"; done
+unset BASH_ENV ENV
+PATH=/usr/bin:/bin:/usr/sbin:/sbin; export PATH
+case "${EUID:-x}" in ''|*[!0-9]*) echo "REFUSED: EUID unreadable" >&2; exit 4;; esac
+_wsp_os=$(/usr/bin/uname -s 2>/dev/null || /bin/uname -s)
+_wsp_fx=0
+if [ -n "${WSP_FIXTURE_ROOT:-}" ]; then
+  if [ "$_wsp_os" = Darwin ] || [ -d /System/Library/CoreServices ] || [ "$EUID" -eq 0 ]; then echo "REFUSED: fixture hook not allowed here" >&2; exit 4; fi
+  _wsp_c=$(cd "$WSP_FIXTURE_ROOT" 2>/dev/null && pwd -P) || { echo "REFUSED: fixture root" >&2; exit 4; }
+  case "$_wsp_c" in /tmp/?*) ;; *) echo "REFUSED: fixture root must canonically be under /tmp" >&2; exit 4;; esac
+  [ "$_wsp_c" = "${WSP_FIXTURE_ROOT%/}" ] || { echo "REFUSED: fixture root has a symlink" >&2; exit 4; }
+  _wsp_fx=1
+fi
+# Inherited suite-internal variables are discarded, including their export
+# attribute (documentation D4-1): unset removes both. Only the validated fixture hook stays.
+for _wsp_v in $(compgen -v WSP_); do case "$_wsp_v" in WSP_FIXTURE_ROOT) ;; *) unset "$_wsp_v";; esac; done
+[ "$_wsp_fx" -eq 1 ] || unset WSP_FIXTURE_ROOT
+_wsp_st() { if [ "$_wsp_os" = Darwin ]; then /usr/bin/stat -f "$1" "$2"; else /usr/bin/stat -c "$3" "$2"; fi; }
+_wsp_noacl() { # deny by default (D3-01): "+" refuses; "@" needs a one-line "ls -lde"
+  _wsp_l=$(/bin/ls -ld "$1" 2>/dev/null) || return 1
+  _wsp_l=${_wsp_l%% *}
+  case "$_wsp_l" in
+    ??????????|??????????.) return 0;;
+    ??????????@) _wsp_n=$(/bin/ls -lde "$1" 2>/dev/null) || return 1
+                 [ "$(printf '%s\n' "$_wsp_n" | /usr/bin/wc -l | /usr/bin/tr -d ' ')" = 1 ];;
+    *) return 1;;
+  esac
+}
+_wsp_trust() { # path: not symlink, no ACL, owner root|workstationadmin (fixture: caller), not group/world writable
+  [ -L "$1" ] && return 1
+  _wsp_noacl "$1" || return 1
+  _wsp_o=$(_wsp_st %Su "$1" %U) || return 1; _wsp_m=$(_wsp_st %Lp "$1" %a) || return 1
+  case "$_wsp_o" in root|workstationadmin) ;; *) [ "$_wsp_fx" -eq 1 ] && [ "$_wsp_o" = "$(/usr/bin/id -un)" ] || return 1;; esac
+  case "$_wsp_m" in *[2367]?|*[2367]) case "$_wsp_m" in 1???) [ -d "$1" ] && [ "$1" != "$_wsp_dir" ] || return 1;; *) return 1;; esac;; esac
+  return 0
+}
+case "$0" in /*) _wsp_self="$0";; *) _wsp_self="$(pwd -P)/$0";; esac
+_wsp_dir=$(cd "${_wsp_self%/*}" 2>/dev/null && pwd -P) || { echo "REFUSED: suite directory" >&2; exit 4; }
+_wsp_a="$_wsp_dir"
+while :; do _wsp_trust "$_wsp_a" || { echo "REFUSED: untrusted suite directory or ancestor" >&2; exit 4; }; [ "$_wsp_a" = / ] && break; _wsp_a=${_wsp_a%/*}; [ -n "$_wsp_a" ] || _wsp_a=/; done
+_wsp_lib="$_wsp_dir/workstationadmin-lib.txt"
+if ! { [ -f "$_wsp_lib" ] && _wsp_trust "$_wsp_lib"; }; then echo "REFUSED: library missing or untrusted" >&2; exit 4; fi
+_wsp_trust "$_wsp_dir/${_wsp_self##*/}" || { echo "REFUSED: entry script untrusted" >&2; exit 4; }
+# Residual risk: a process running as root or workstationadmin can still replace
+# files between this check and use. Those identities are trusted by design.
+# shellcheck source=/dev/null
+. "$_wsp_lib"
+WSP_MODULE="power"
+WSP_GATE_NEEDS=root
+wsp_parse_mode "$@"
+pm_read() { # sets PM_RC and PM_OUT from pmset -g custom (in memory)
+  wsp_run PM_OUT pmset -g custom; PM_RC=$WSP_RC
+}
+pm_val() { # D9: in-shell (no awk). PM_VAL = displaysleep value of section $1; empty unless exactly one such line
+  local _l _s=$1 _f=0 _n=0 _ifs=$IFS; PM_VAL=""; set -f; IFS=$WSP_NL
+  for _l in $PM_OUT; do
+    case "$_l" in "$_s"*) _f=1; continue;; [A-Z]*) _f=0;; esac
+    if [ "$_f" -eq 1 ]; then
+      IFS=$_ifs
+      # shellcheck disable=SC2086 # intentional word split of one pmset line (globbing is off)
+      set -- $_l; IFS=$WSP_NL
+      if [ "${1:-}" = displaysleep ]; then _n=$((_n+1)); PM_VAL=${2:-}; fi
+    fi
+  done
+  IFS=$_ifs; set +f
+  [ "$_n" -eq 1 ] || PM_VAL=""; }
+chk() { # flag(-b|-c) want unused label
+  want="$2"   # fixed by R28 (battery 20, adapter/desktop 30)
+  sect="Battery Power"; [ "$1" = "-c" ] && sect="AC Power"
+  pm_read
+  if [ "$PM_RC" -ne 0 ] || [ -z "$PM_OUT" ]; then wsp_status UNKNOWN R28 "$4" "pmset read failed" "$want" unknown effective-cli "$PM_RC" "$WSP_ERRCLASS"; return; fi
+  if ! wsp_any_line "$PM_OUT" "$sect"; then wsp_status UNSUPPORTED R28 "$4" "power source section absent (hardware)" "$want" n/a effective-cli 0; return; fi
+  pm_val "$sect"; have=$PM_VAL
+  case "$have" in ''|*[!0-9]*) wsp_status UNKNOWN R28 "$4" "displaysleep value not parseable" "$want" unknown effective-cli 0 parse; return;; esac
+  if [ "$have" = "$want" ]; then wsp_status ALREADY_CORRECT R28 "$4" "pmset readback" "$want" "$have" effective-cli 0; return; fi
+  if [ "$WSP_MODE" != "apply" ]; then wsp_status PROPOSED R28 "$4" "would set" "$want" "$have" effective-cli 0; return; fi
+  wsp_run x pmset "$1" displaysleep "$want"; set_rc=$WSP_RC
+  pm_read; pm_val "$sect"; have=$PM_VAL
+  if [ "$set_rc" -eq 0 ] && [ "$PM_RC" -eq 0 ] && [ "$have" = "$want" ]; then wsp_status CHANGED_VERIFIED R28 "$4" "pmset readback" "$want" "$have" effective-cli 0
+  else wsp_status FAILED R28 "$4" "set failed or readback mismatch" "$want" "${have:-unknown}" effective-cli "$set_rc"; fi
+}
+chk -b 20 DISPLAYSLEEP_BATTERY displaysleep-battery
+chk -c 30 DISPLAYSLEEP_AC displaysleep-ac
+wsp_status PENDING_CONSENT R28 energy-warning "any energy-use warning is an operator acknowledgment" "" "" manual
+wsp_finish

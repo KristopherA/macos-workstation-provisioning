@@ -1,0 +1,221 @@
+#!/bin/bash
+# workstationadmin-mod-firstlogin.txt - first-login agent installer (module 3)
+# Account: workstationadmin via launcher.
+# Root: required (sudo) for apply.
+# Bash 3.2, stock macOS tools only.
+# Dry run (inspect) is the default; changes happen only with --mode apply.
+# No secret is ever accepted as an argument, written to a log or reported.
+# Requirements: R01 R02 (first-login mechanism, module 3, d14). Root: required (through the launcher's sudo) for apply.
+# Installs ONE per-user-once LaunchAgent, narrowly scoped, after the operator's root-side decision. Nothing else is changed, nothing is loaded:
+#   /Library/Management/WorkstationProvisioning-Session/bin/                      root 0755 (new folder)
+#     UserSpace-preferences.txt, workstationadmin-lib.txt                        root 0444 (copies of the suite files of THIS run)
+#   /Library/LaunchAgents/<label>.plist                                            root 0644 (exact text, see wsp_fl_plist_text)
+#   /Library/Management/WorkstationProvisioning-Session/firstlogin-consent.conf    root 0644, written LAST: the record that arms the agent
+# <label> is policy FIRSTLOGIN_LABEL (generic reverse-DNS, never com.apple.*), default com.example.workstationprovisioning.firstlogin.
+# Apply needs: the root apply gate (workstationadmin through sudo, allowed build, SIP, MDM state readable), the launcher's typed APPLY,
+# FIRSTLOGIN_CONSENT=yes in the root-owned policy, USER_PREFS_CONSENT=yes and USERS in the session policy, and a valid user-prefs.conf.
+# The consent record binds the agent to the SHA-256 of that user-prefs.conf and to the exact USERS value. If either changes afterwards the
+# agent gives PENDING_CONSENT and writes nothing, until this module is run again (the decision is repeated, never inherited).
+# Each target is classified first: a symlink, a non-regular object, an ACL or a non-root owner REFUSES the whole install (nothing is written);
+# an identical target is left alone (idempotent re-run); a different or absent one is backed up (checked backup, ABSENT marker for a new
+# file), replaced through a temp file in the same folder, and verified (content, owner, mode). A failed step stops the install (the
+# consent record is never written after a failure). There is no launchctl call, no login hook, no TCC change, no network use: launchd
+# picks the plist up at the user's first GUI login. Removal and rollback are a MANUAL record (interface section 13): this module removes nothing.
+# At login the agent (d15, owner Q9) needs ITS OWN typed word APPLY on a terminal; the login-time run has none, so it reports PENDING_CONSENT and writes
+# nothing (the user runs the installed script by hand in Terminal). After a run with no failed step it writes a done marker in that user's own folder;
+# a failed step writes no marker (the next run tries again, with one reused backup folder, owner Q4); with the marker present later runs do nothing.
+# T confidence: launchd behaviour (RunAtLoad timing, LimitLoadToSessionType Aqua, plutil -lint output) is NOT validated on a Mac.
+# ---- trusted bootstrap (CR01) ------------------------------------------
+# Runs before anything else: fixed PATH, readonly EUID check, then trust checks
+# on the suite directory, every ancestor and the library, using only absolute
+# tool paths. The fixture hook is honoured only off macOS, as non-root, under a
+# canonical /tmp path; otherwise it is refused, never silently relaxed.
+set +x +a   # no tracing; no allexport (D3-03)
+# d14 (reviewer S1): every function that exists at this point was imported from the caller's environment (exported BASH_FUNC_*) or
+# defined by a BASH_ENV startup file; none is trusted, so all are discarded before the first tool name is resolved. BASH_ENV
+# itself has already been read by this shell (it cannot be cleared in time); unsetting it only protects the child shells.
+for _wsp_f in $(compgen -A function); do unset -f "$_wsp_f"; done
+unset BASH_ENV ENV
+PATH=/usr/bin:/bin:/usr/sbin:/sbin; export PATH
+case "${EUID:-x}" in ''|*[!0-9]*) echo "REFUSED: EUID unreadable" >&2; exit 4;; esac
+_wsp_os=$(/usr/bin/uname -s 2>/dev/null || /bin/uname -s)
+_wsp_fx=0
+if [ -n "${WSP_FIXTURE_ROOT:-}" ]; then
+  if [ "$_wsp_os" = Darwin ] || [ -d /System/Library/CoreServices ] || [ "$EUID" -eq 0 ]; then echo "REFUSED: fixture hook not allowed here" >&2; exit 4; fi
+  _wsp_c=$(cd "$WSP_FIXTURE_ROOT" 2>/dev/null && pwd -P) || { echo "REFUSED: fixture root" >&2; exit 4; }
+  case "$_wsp_c" in /tmp/?*) ;; *) echo "REFUSED: fixture root must canonically be under /tmp" >&2; exit 4;; esac
+  [ "$_wsp_c" = "${WSP_FIXTURE_ROOT%/}" ] || { echo "REFUSED: fixture root has a symlink" >&2; exit 4; }
+  _wsp_fx=1
+fi
+# Inherited suite-internal variables are discarded, including their export
+# attribute (documentation D4-1): unset removes both. Only the validated fixture hook stays.
+for _wsp_v in $(compgen -v WSP_); do case "$_wsp_v" in WSP_FIXTURE_ROOT) ;; *) unset "$_wsp_v";; esac; done
+[ "$_wsp_fx" -eq 1 ] || unset WSP_FIXTURE_ROOT
+_wsp_st() { if [ "$_wsp_os" = Darwin ]; then /usr/bin/stat -f "$1" "$2"; else /usr/bin/stat -c "$3" "$2"; fi; }
+_wsp_noacl() { # deny by default (D3-01): "+" refuses; "@" needs a one-line "ls -lde"
+  _wsp_l=$(/bin/ls -ld "$1" 2>/dev/null) || return 1
+  _wsp_l=${_wsp_l%% *}
+  case "$_wsp_l" in
+    ??????????|??????????.) return 0;;
+    ??????????@) _wsp_n=$(/bin/ls -lde "$1" 2>/dev/null) || return 1
+                 [ "$(printf '%s\n' "$_wsp_n" | /usr/bin/wc -l | /usr/bin/tr -d ' ')" = 1 ];;
+    *) return 1;;
+  esac
+}
+_wsp_trust() { # path: not symlink, no ACL, owner root|workstationadmin (fixture: caller), not group/world writable
+  [ -L "$1" ] && return 1
+  _wsp_noacl "$1" || return 1
+  _wsp_o=$(_wsp_st %Su "$1" %U) || return 1; _wsp_m=$(_wsp_st %Lp "$1" %a) || return 1
+  case "$_wsp_o" in root|workstationadmin) ;; *) [ "$_wsp_fx" -eq 1 ] && [ "$_wsp_o" = "$(/usr/bin/id -un)" ] || return 1;; esac
+  case "$_wsp_m" in *[2367]?|*[2367]) case "$_wsp_m" in 1???) [ -d "$1" ] && [ "$1" != "$_wsp_dir" ] || return 1;; *) return 1;; esac;; esac
+  return 0
+}
+case "$0" in /*) _wsp_self="$0";; *) _wsp_self="$(pwd -P)/$0";; esac
+_wsp_dir=$(cd "${_wsp_self%/*}" 2>/dev/null && pwd -P) || { echo "REFUSED: suite directory" >&2; exit 4; }
+_wsp_a="$_wsp_dir"
+while :; do _wsp_trust "$_wsp_a" || { echo "REFUSED: untrusted suite directory or ancestor" >&2; exit 4; }; [ "$_wsp_a" = / ] && break; _wsp_a=${_wsp_a%/*}; [ -n "$_wsp_a" ] || _wsp_a=/; done
+_wsp_lib="$_wsp_dir/workstationadmin-lib.txt"
+if ! { [ -f "$_wsp_lib" ] && _wsp_trust "$_wsp_lib"; }; then echo "REFUSED: library missing or untrusted" >&2; exit 4; fi
+_wsp_trust "$_wsp_dir/${_wsp_self##*/}" || { echo "REFUSED: entry script untrusted" >&2; exit 4; }
+# Residual risk: a process running as root or workstationadmin can still replace
+# files between this check and use. Those identities are trusted by design.
+# shellcheck source=/dev/null
+. "$_wsp_lib"
+WSP_MODULE="firstlogin"
+WSP_GATE_NEEDS=root
+wsp_parse_mode "$@"
+SD="$WSP_SESSION_DIR"; BIN="$WSP_FL_BIN"; LADIR="$WSP_ROOT/Library/LaunchAgents"
+if ! lab=$(wsp_fl_label); then
+  wsp_status BLOCKED_POLICY R01 fl-label "FIRSTLOGIN_LABEL is set but is not a valid generic label (3-5 dotted parts of a-z 0-9 -, not com.apple.*); nothing is changed" "" invalid record
+  wsp_finish
+fi
+LA="$LADIR/$lab.plist"
+SCR="$BIN/UserSpace-preferences.txt"; LIBC="$BIN/workstationadmin-lib.txt"
+# ---- preconditions (the first one that fails is the reason; inspect still classifies the targets) ----
+why=""; psha=""; users=""
+fcons=$(wsp_policy FIRSTLOGIN_CONSENT) || fcons=""
+[ "$fcons" = yes ] || why="FIRSTLOGIN_CONSENT=yes is not set in the root-owned policy (D03/D32)"
+pcons=$(wsp_session_policy USER_PREFS_CONSENT) || pcons=""
+[ -n "$why" ] || [ "$pcons" = yes ] || why="USER_PREFS_CONSENT=yes is not set in the session policy"
+users=$(wsp_session_policy USERS) || users=""
+[ -n "$why" ] || [ -n "$users" ] || why="session policy USERS is unset"
+if [ -z "$why" ] && ! wsp_prefs_load; then why="$WSP_PREF_WHY"; fi
+if [ -z "$why" ]; then psha=$(wsp_sha256_file "$SD/user-prefs.conf") || why="the preference list could not be hashed"; fi
+if [ -z "$why" ]; then
+  wsp_check_file "$_wsp_dir/UserSpace-preferences.txt" && wsp_check_file "$_wsp_lib" || why="the suite copy of UserSpace-preferences.txt or the library failed the trust check"
+fi
+if [ -z "$why" ]; then
+  wsp_trusted_dir "$SD" && wsp_trusted_dir "$LADIR" || why="the session folder or the LaunchAgents folder is not a trusted folder"
+fi
+# ---- classification: FLST = ok | absent | differs | bad ----
+ptext=""; ctext=""
+ptext=$(wsp_fl_plist_text "$lab")
+if [ -n "$psha" ]; then ctext=$(wsp_fl_consent_text "$psha" "$users"); fi
+fl_class() { # TARGET KIND MODE
+  local t=$1 k=$2 m=$3 o md
+  FLST=bad
+  [ -L "$t" ] && return 0
+  if [ ! -e "$t" ]; then FLST=absent; return 0; fi
+  [ -f "$t" ] || return 0
+  o=$(wsp_stat_owner "$t") || return 0
+  wsp_fl_owner_ok "$o" || return 0
+  wsp_no_acl "$t" || return 0
+  md=$(wsp_stat_mode "$t") || return 0
+  FLST=differs
+  case "$k" in
+    script) cmp -s "$_wsp_dir/UserSpace-preferences.txt" "$t" || return 0;;
+    lib) cmp -s "$_wsp_lib" "$t" || return 0;;
+    plist) wsp_fl_text_is "$t" "$ptext" || return 0;;
+    consent) [ -n "$ctext" ] && wsp_fl_text_is "$t" "$ctext" || return 0;;
+  esac
+  [ "$md" = "$m" ] || return 0
+  FLST=ok; return 0; }
+fl_class_dir() { # the installed-copy folder
+  local o md
+  FLST=bad
+  [ -L "$BIN" ] && return 0
+  if [ ! -e "$BIN" ]; then FLST=absent; return 0; fi
+  [ -d "$BIN" ] || return 0
+  o=$(wsp_stat_owner "$BIN") || return 0
+  wsp_fl_owner_ok "$o" || return 0
+  wsp_no_acl "$BIN" || return 0
+  md=$(wsp_stat_mode "$BIN") || return 0
+  wsp_mode_not_gw "$md" || return 0
+  if [ "$md" = 755 ]; then FLST=ok; else FLST=differs; fi
+  return 0; }
+fl_put() { # KIND TARGET MODE: backup, temp file in the same folder, chmod, mv, verify. 0 only if the target is then exactly right.
+  local k=$1 t=$2 m=$3 d tmp
+  d=${t%/*}
+  [ -d "$d" ] && [ ! -L "$d" ] || return 1
+  wsp_backup "$t" || return 1
+  wsp_backup_check "$t" || return 1
+  tmp=$(mktemp "$d/.wsp-new.XXXXXX") || return 1
+  case "$k" in
+    script) cp "$_wsp_dir/UserSpace-preferences.txt" "$tmp";;
+    lib) cp "$_wsp_lib" "$tmp";;
+    plist) wsp_fl_plist_text "$lab" > "$tmp";;
+    consent) wsp_fl_consent_text "$psha" "$users" > "$tmp";;
+    *) false;;
+  esac || { rm -f "$tmp"; return 1; }
+  chmod "$m" "$tmp" || { rm -f "$tmp"; return 1; }
+  mv -f "$tmp" "$t" || { rm -f "$tmp"; return 1; }
+  fl_class "$t" "$k" "$m"; [ "$FLST" = ok ]; }
+fl_report() { # CHECK STATE-after-classification: inspect-style line for one target
+  case "$2" in
+    ok) wsp_status ALREADY_CORRECT R01 "$1" "installed and identical to the suite's expected content, owner and mode" present present record;;
+    absent) wsp_status PROPOSED R01 "$1" "not installed; would be installed (apply, after a checked backup)" present absent record;;
+    differs) wsp_status PROPOSED R01 "$1" "installed but different (content or mode); would be replaced (apply, after a checked backup)" present differs record;;
+    *) wsp_status BLOCKED_POLICY R01 "$1" "a symlink, a non-regular object, an ACL or a target not owned by root: refused, nothing is changed" "" bad record;;
+  esac; }
+fl_class_dir; st_bin=$FLST
+fl_class "$LIBC" lib 444; st_lib=$FLST
+fl_class "$SCR" script 444; st_scr=$FLST
+fl_class "$LA" plist 644; st_pl=$FLST
+fl_class "$WSP_FL_CONSENT" consent 644; st_cs=$FLST
+anybad=0
+for _s in "$st_bin" "$st_lib" "$st_scr" "$st_pl" "$st_cs"; do [ "$_s" != bad ] || anybad=1; done
+if [ "$WSP_MODE" = apply ]; then
+  if [ -n "$why" ]; then
+    WSP_MODE=inspect
+    wsp_status BLOCKED_POLICY P01 apply-gate "apply refused, running inspect only: $why" pass blocked record
+  elif [ "$anybad" -eq 1 ]; then
+    WSP_MODE=inspect
+    wsp_status BLOCKED_POLICY P01 apply-gate "apply refused, running inspect only: a target is a symlink, a non-regular object, has an ACL or is not owned by root" pass blocked record
+  fi
+fi
+if [ "$WSP_MODE" = apply ]; then
+  # order: folder, library, script, plist, consent record LAST; a failed step stops the install (nothing arms the agent after a failure)
+  stop=0
+  fl_step() { # CHECK KIND TARGET MODE STATE
+    if [ "$stop" -eq 1 ]; then wsp_status FAILED R01 "$1" "not attempted: an earlier install step failed; the consent record is not written" present "$5" record; return 0; fi
+    if [ "$5" = ok ]; then wsp_status ALREADY_CORRECT R01 "$1" "installed and identical to the suite's expected content, owner and mode (no change, no backup)" present present record; return 0; fi
+    if fl_put "$2" "$3" "$4"; then wsp_status CHANGED_VERIFIED R01 "$1" "installed after a checked backup; content, owner and mode verified" present present record "" "" "$WSP_BACKUP_DIR"
+    else stop=1; wsp_status FAILED R01 "$1" "install or verification failed; nothing is rolled back automatically (see the backup for the manual restore)" present failed record "" "" "$WSP_BACKUP_DIR"; fi; }
+  if [ "$st_bin" = ok ]; then wsp_status ALREADY_CORRECT R01 fl-bin "installed folder exists with the expected owner and mode" present present record
+  else
+    if { [ "$st_bin" = absent ] && mkdir "$BIN"; } && chmod 755 "$BIN" || { [ "$st_bin" = differs ] && chmod 755 "$BIN"; }; then
+      fl_class_dir
+      if [ "$FLST" = ok ]; then wsp_status CHANGED_VERIFIED R01 fl-bin "folder created or its mode set to 0755; verified" present present record
+      else stop=1; wsp_status FAILED R01 fl-bin "folder was not verified after the change" present failed record; fi
+    else stop=1; wsp_status FAILED R01 fl-bin "folder could not be created or changed" present failed record; fi
+  fi
+  fl_step fl-lib lib "$LIBC" 444 "$st_lib"
+  fl_step fl-script script "$SCR" 444 "$st_scr"
+  fl_step fl-plist plist "$LA" 644 "$st_pl"
+  fl_step fl-consent consent "$WSP_FL_CONSENT" 644 "$st_cs"
+else
+  fl_report fl-bin "$st_bin"
+  fl_report fl-lib "$st_lib"
+  fl_report fl-script "$st_scr"
+  fl_report fl-plist "$st_pl"
+  fl_report fl-consent "$st_cs"
+  if [ "$st_cs" = differs ]; then wsp_status PENDING_CONSENT R01 fl-consent-stale "the consent record does not match the current preference list and user list: the agent gives PENDING_CONSENT and writes nothing until apply is run again" "" stale record; fi
+fi
+# lint of the installed plist (read-only): the exact output text is a Mac item
+if [ -f "$LA" ] && [ ! -L "$LA" ]; then
+  wsp_run lx plutil -lint "$LA"
+  if [ "$WSP_RC" -eq 0 ] && [ "$WSP_CAPTURE" = ok ] && [ "$lx" = "$LA: OK" ]; then wsp_status ALREADY_CORRECT R01 fl-plist-lint "plutil -lint reports OK" ok ok record
+  else wsp_status FAILED R01 fl-plist-lint "plutil -lint did not report OK for the installed plist" ok failed record "$WSP_RC"; fi
+fi
+wsp_status PENDING_LOGIN R01 first-login-run "the agent runs at each listed user's first GUI login (not validated on a Mac); the user's own report there is the evidence; stored values only" "" "" manual
+wsp_finish

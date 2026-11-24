@@ -1,0 +1,391 @@
+#!/bin/bash
+# workstationadmin-mod-apps.txt - applications R11 R12 (d16, module 5: install from a LOCAL signed .pkg or .dmg)
+# Account: workstationadmin via launcher (or run directly with sudo from Terminal; apply asks its own typed APPLY).
+# Root: required (sudo) for apply.
+# Bash 3.2, stock macOS tools only.
+# Dry run (inspect) is the default; changes happen only with --mode apply.
+# No secret is ever accepted as an argument, written to a log or reported.
+# Requirements: R11 R12 R27 R34. No network download, no App Store, no Apple Account, no purchase: the operator supplies the
+# vendor package file in a local folder. Policy (ROOT-owned policy.conf only; no site value in code):
+#   APP_LIST            Label/BundleName[/store] entries separated by ":" (unchanged; "/store" apps are never installed here, R12)
+#   APP_PACKAGES        Label=FILE entries separated by ":"; FILE is a plain name ending .pkg or .dmg (A-Za-z0-9 space . _ + -, no "/",
+#                       no leading "." or "-"), Label is a non-store APP_LIST label; at most one entry per label
+#   APP_TEAM_IDS        Label=TEAMID entries separated by ":" (S-2): the ONLY Apple Developer Team ID (10 of A-Z 0-9) accepted for that
+#                       label. Unset, empty or malformed = apps apply is BLOCKED_POLICY (zero writes); every APP_PACKAGES label needs one.
+#   APP_SOURCE_DIR      absolute folder holding the files (same grammar as SHARED_SOURCE_DIR; not /Applications, /Library/Management, /System)
+#   APP_INSTALL_CONSENT must be "yes" for apply
+# Verification (fail closed; anything not proven = BLOCKED_POLICY or FAILED with zero writes): the folder and its ancestors are trusted
+# (real folders, root or operator, not group/other writable, no ACL); the file is a regular non-symlink file, root or operator owned, not
+# group/other writable, no setuid/setgid/sticky, no ACL. .pkg: pkgutil --check-signature must report an Apple-issued distribution
+# signature, the notary line, ONE "1. Developer ID Installer: ... (TEAMID)" leaf and the Apple Root CA, with TEAMID equal to the label's
+# APP_TEAM_IDS value; spctl -a -t install must accept it. .dmg: codesign --verify with the requirement "anchor apple generic and
+# the Developer ID CA and leaf OIDs and certificate leaf[subject.OU] = TEAMID" (ap_req) and spctl (open, primary signature) must accept the image; at apply the app inside (mounted
+# read-only, nobrowse, at a private mount point) must pass codesign --deep --strict with the same requirement and spctl -a -t exec.
+# Apply: root apply gate, APP_INSTALL_CONSENT=yes, EVERY configured package passes the checks above (else the whole apply is refused),
+# then this module's own typed APPLY on the terminal (no terminal or another answer = PENDING_CONSENT, zero writes). Zero writes holds
+# for these pre-check refusals only: an apply-time failure stops the loop, but apps installed before it stay, and a vendor package can
+# leave a partial install (FAILED, exit 3). Each package is copied
+# into a root-only staging folder and verified AGAIN there; only the staged copy is installed (installer -pkg) or copied out of the image
+# (ditto, owner root:wheel, group/other write removed, no-clobber no-follow placement into /Applications). The installed app is verified again (signature, Team ID,
+# Gatekeeper). An app that is already present is never replaced: verified = ALREADY_CORRECT, otherwise BLOCKED_POLICY. Images are always
+# detached (also on failure and on exit). A package runs its own vendor scripts as root: the Team ID allowlist is that trust decision.
+# Sign-in, licensing, first launch and privacy consent stay with the user (PENDING_LOGIN / PENDING_CONSENT), never TCC edits.
+# ---- trusted bootstrap (CR01) ------------------------------------------
+# Runs before anything else: fixed PATH, readonly EUID check, then trust checks
+# on the suite directory, every ancestor and the library, using only absolute
+# tool paths. The fixture hook is honoured only off macOS, as non-root, under a
+# canonical /tmp path; otherwise it is refused, never silently relaxed.
+set +x +a   # no tracing; no allexport (D3-03)
+# d14 (reviewer S1): every function that exists at this point was imported from the caller's environment (exported BASH_FUNC_*) or
+# defined by a BASH_ENV startup file; none is trusted, so all are discarded before the first tool name is resolved. BASH_ENV
+# itself has already been read by this shell (it cannot be cleared in time); unsetting it only protects the child shells.
+for _wsp_f in $(compgen -A function); do unset -f "$_wsp_f"; done
+unset BASH_ENV ENV
+PATH=/usr/bin:/bin:/usr/sbin:/sbin; export PATH
+case "${EUID:-x}" in ''|*[!0-9]*) echo "REFUSED: EUID unreadable" >&2; exit 4;; esac
+_wsp_os=$(/usr/bin/uname -s 2>/dev/null || /bin/uname -s)
+_wsp_fx=0
+if [ -n "${WSP_FIXTURE_ROOT:-}" ]; then
+  if [ "$_wsp_os" = Darwin ] || [ -d /System/Library/CoreServices ] || [ "$EUID" -eq 0 ]; then echo "REFUSED: fixture hook not allowed here" >&2; exit 4; fi
+  _wsp_c=$(cd "$WSP_FIXTURE_ROOT" 2>/dev/null && pwd -P) || { echo "REFUSED: fixture root" >&2; exit 4; }
+  case "$_wsp_c" in /tmp/?*) ;; *) echo "REFUSED: fixture root must canonically be under /tmp" >&2; exit 4;; esac
+  [ "$_wsp_c" = "${WSP_FIXTURE_ROOT%/}" ] || { echo "REFUSED: fixture root has a symlink" >&2; exit 4; }
+  _wsp_fx=1
+fi
+# Inherited suite-internal variables are discarded, including their export
+# attribute (documentation D4-1): unset removes both. Only the validated fixture hook stays.
+for _wsp_v in $(compgen -v WSP_); do case "$_wsp_v" in WSP_FIXTURE_ROOT) ;; *) unset "$_wsp_v";; esac; done
+[ "$_wsp_fx" -eq 1 ] || unset WSP_FIXTURE_ROOT
+_wsp_st() { if [ "$_wsp_os" = Darwin ]; then /usr/bin/stat -f "$1" "$2"; else /usr/bin/stat -c "$3" "$2"; fi; }
+_wsp_noacl() { # deny by default (D3-01): "+" refuses; "@" needs a one-line "ls -lde"
+  _wsp_l=$(/bin/ls -ld "$1" 2>/dev/null) || return 1
+  _wsp_l=${_wsp_l%% *}
+  case "$_wsp_l" in
+    ??????????|??????????.) return 0;;
+    ??????????@) _wsp_n=$(/bin/ls -lde "$1" 2>/dev/null) || return 1
+                 [ "$(printf '%s\n' "$_wsp_n" | /usr/bin/wc -l | /usr/bin/tr -d ' ')" = 1 ];;
+    *) return 1;;
+  esac
+}
+_wsp_trust() { # path: not symlink, no ACL, owner root|workstationadmin (fixture: caller), not group/world writable
+  [ -L "$1" ] && return 1
+  _wsp_noacl "$1" || return 1
+  _wsp_o=$(_wsp_st %Su "$1" %U) || return 1; _wsp_m=$(_wsp_st %Lp "$1" %a) || return 1
+  case "$_wsp_o" in root|workstationadmin) ;; *) [ "$_wsp_fx" -eq 1 ] && [ "$_wsp_o" = "$(/usr/bin/id -un)" ] || return 1;; esac
+  case "$_wsp_m" in *[2367]?|*[2367]) case "$_wsp_m" in 1???) [ -d "$1" ] && [ "$1" != "$_wsp_dir" ] || return 1;; *) return 1;; esac;; esac
+  return 0
+}
+case "$0" in /*) _wsp_self="$0";; *) _wsp_self="$(pwd -P)/$0";; esac
+_wsp_dir=$(cd "${_wsp_self%/*}" 2>/dev/null && pwd -P) || { echo "REFUSED: suite directory" >&2; exit 4; }
+_wsp_a="$_wsp_dir"
+while :; do _wsp_trust "$_wsp_a" || { echo "REFUSED: untrusted suite directory or ancestor" >&2; exit 4; }; [ "$_wsp_a" = / ] && break; _wsp_a=${_wsp_a%/*}; [ -n "$_wsp_a" ] || _wsp_a=/; done
+_wsp_lib="$_wsp_dir/workstationadmin-lib.txt"
+if ! { [ -f "$_wsp_lib" ] && _wsp_trust "$_wsp_lib"; }; then echo "REFUSED: library missing or untrusted" >&2; exit 4; fi
+_wsp_trust "$_wsp_dir/${_wsp_self##*/}" || { echo "REFUSED: entry script untrusted" >&2; exit 4; }
+# Residual risk: a process running as root or workstationadmin can still replace
+# files between this check and use. Those identities are trusted by design.
+# shellcheck source=/dev/null
+. "$_wsp_lib"
+WSP_MODULE="apps"
+WSP_GATE_NEEDS=root
+wsp_parse_mode "$@"
+# ---- d16 (module 5): policy ----
+AP_MAX_PKG=4294967296   # 4 GiB per package file
+arch=$(wsp_read_arch) || arch=""
+applist=$(wsp_policy APP_LIST) || applist=""
+teams=$(wsp_policy APP_TEAM_IDS) || teams=""
+pkgs=$(wsp_policy APP_PACKAGES) || pkgs=""
+asrc=$(wsp_policy APP_SOURCE_DIR) || asrc=""
+acons=$(wsp_policy APP_INSTALL_CONSENT) || acons=""
+AP_WHY=""; AP_PKG_TEAM=""; AP_MAP=""; STAGE=""; MNT=""; AP_MOUNTED=0; AP_KEEP=0
+APPS="$WSP_ROOT/Applications"
+ap_team_ok() { wsp_re "$1" '^[A-Z0-9]{10}$'; }
+ap_file_ok() { # a plain package file name: no path, no hidden or option-like name, .pkg or .dmg
+  case "$1" in ''|.*|-*|*" "|*[!A-Za-z0-9\ ._+-]*) return 1;; esac
+  case "$1" in ?*.pkg|?*.dmg) ;; *) return 1;; esac
+  [ ${#1} -le 100 ]; }
+ap_src_ok() { # the operator's folder: absolute, plain characters, no dot segments, not the destination, policy or system folders
+  case "$1" in /?*) ;; *) return 1;; esac
+  case "$1" in *[!A-Za-z0-9\ ._+/-]*|*//*|*/|*/./*|*/../*|*/.|*/..) return 1;; esac
+  [ ${#1} -le 200 ] || return 1
+  case "$1/" in /Applications/*|/Library/Management/*|/System/*) return 1;; esac
+  return 0; }
+ap_nonstore() { # LABEL: 0 if LABEL is a non-store APP_LIST entry; sets AP_BUNDLE
+  local _e _ifs _r=1; AP_BUNDLE=""; _ifs=$IFS; set -f; IFS=$WSP_NL
+  for _e in $WSP_APP_ENTRIES; do
+    case "$_e" in "$1|"*"|") AP_BUNDLE=${_e#*|}; AP_BUNDLE=${AP_BUNDLE%|}; _r=0; break;; esac
+  done
+  IFS=$_ifs; set +f; return "$_r"; }
+ap_map_ok() { # VALUE KIND(team|file): "Label=VALUE" entries separated by ":"; sets AP_MAP (newline separated "label|value")
+  local _e _l _v _ifs _seen="$WSP_NL" _k=${2:-}
+  AP_MAP=""
+  case "$1" in ''|:*|*:|*::*) return 1;; esac
+  _ifs=$IFS; set -f; IFS=:
+  # shellcheck disable=SC2086 # intentional ':' split (globbing off)
+  set -- $1
+  IFS=$_ifs; set +f
+  for _e in "$@"; do
+    case "$_e" in *=*=*|=*|*=) return 1;; *=*) ;; *) return 1;; esac
+    _l=${_e%%=*}; _v=${_e#*=}
+    ap_nonstore "$_l" || return 1
+    case "$_seen" in *"$WSP_NL$_l$WSP_NL"*) return 1;; esac
+    _seen="$_seen$_l$WSP_NL"
+    case "$_k" in team) ap_team_ok "$_v" || return 1;; file) ap_file_ok "$_v" || return 1;; *) return 1;; esac
+    AP_MAP="$AP_MAP$_l|$_v$WSP_NL"
+  done
+  [ -n "$AP_MAP" ]; }
+ap_get() { # MAP LABEL -> prints the value
+  local _e _ifs _r=1; _ifs=$IFS; set -f; IFS=$WSP_NL
+  for _e in $1; do case "$_e" in "$2|"*) printf '%s' "${_e#*|}"; _r=0; break;; esac; done
+  IFS=$_ifs; set +f; return "$_r"; }
+# d16 draft2 (reviewer S-1): the requirement also needs the Developer ID intermediate and leaf OIDs (defence in depth if Gatekeeper assessment
+# is disabled on a host): Developer ID CA 1.2.840.113635.100.6.2.6, Developer ID Application leaf 1.2.840.113635.100.6.1.13.
+ap_req() { printf 'anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = "%s"' "$1"; }
+ap_pkg_file_ok() { local _p=$1 _o _m _s # the package FILE itself (source or staged copy). Sets AP_WHY.
+  if [ -L "$_p" ]; then AP_WHY="the package file is a symlink"; return 1; fi
+  if [ ! -e "$_p" ]; then AP_WHY="the package file is missing"; return 1; fi
+  [ -f "$_p" ] || { AP_WHY="the package is not a regular file"; return 1; }
+  _o=$(wsp_stat_owner "$_p") || { AP_WHY="owner unreadable"; return 1; }
+  wsp_fl_owner_ok "$_o" || [ "$_o" = "$WSP_OPERATOR" ] || { AP_WHY="the package file owner is not root or the operator"; return 1; }
+  _m=$(wsp_stat_mode "$_p") || { AP_WHY="mode unreadable"; return 1; }
+  [ ${#_m} -le 3 ] || { AP_WHY="setuid, setgid or sticky bit on the package file"; return 1; }
+  wsp_mode_not_gw "$_m" || { AP_WHY="the package file is writable by group or others"; return 1; }
+  wsp_no_acl "$_p" || { AP_WHY="the package file has an ACL"; return 1; }
+  _s=$(wsp_stat_size "$_p") || { AP_WHY="size unreadable"; return 1; }
+  case "$_s" in ''|*[!0-9]*) AP_WHY="size unreadable"; return 1;; esac
+  [ "$_s" -gt 0 ] && [ "$_s" -le "$AP_MAX_PKG" ] || { AP_WHY="the package file is empty or larger than 4 GiB"; return 1; }
+  return 0; }
+# ap_sig_parse TEXT: the pkgutil --check-signature text. 0 only with exactly one Apple distribution status line, one notary line, one
+# "1. Developer ID Installer: NAME (TEAMID)" leaf and an Apple Root CA line. Sets AP_PKG_TEAM. Any other shape fails (fail closed).
+ap_sig_parse() { local _l _ifs _st=0 _no=0 _lf=0 _rt=0 _t="" LC_ALL=C
+  local _rs='^[[:space:]]*Status: signed by a developer certificate issued by Apple for distribution$'
+  local _rn='^[[:space:]]*Notarization: trusted by the Apple notary service$'
+  local _rl='^[[:space:]]*1\. Developer ID Installer: [^()]+ \(([A-Z0-9]{10})\)$'
+  local _rr='^[[:space:]]*[0-9]+\. Apple Root CA$'
+  AP_PKG_TEAM=""; _ifs=$IFS; set -f; IFS=$WSP_NL
+  for _l in $1; do
+    if [[ $_l =~ $_rs ]]; then _st=$((_st+1)); fi
+    if [[ $_l =~ $_rn ]]; then _no=$((_no+1)); fi
+    if [[ $_l =~ $_rl ]]; then _lf=$((_lf+1)); _t=${BASH_REMATCH[1]}; fi
+    if [[ $_l =~ $_rr ]]; then _rt=$((_rt+1)); fi
+  done
+  IFS=$_ifs; set +f
+  [ "$_st" -eq 1 ] && [ "$_no" -eq 1 ] && [ "$_lf" -eq 1 ] && [ "$_rt" -eq 1 ] || return 1
+  AP_PKG_TEAM=$_t; return 0; }
+ap_pkg_verify() { local _o # FILE TEAM: signature, Team ID, Gatekeeper (install). Sets AP_WHY.
+  wsp_run _o pkgutil --check-signature "$1"
+  [ "$WSP_RC" -eq 0 ] && [ "$WSP_CAPTURE" = ok ] || { AP_WHY="pkgutil does not report a valid signature (unsigned or broken)"; return 1; }
+  ap_sig_parse "$_o" || { AP_WHY="the signature is not an Apple-issued Developer ID Installer signature with notarization"; return 1; }
+  [ "$AP_PKG_TEAM" = "$2" ] || { AP_WHY="signed by a Team ID that is not the allowed one for this app"; return 1; }
+  wsp_run _o spctl -a -t install "$1"
+  [ "$WSP_RC" -eq 0 ] || { AP_WHY="Gatekeeper (spctl, install) rejects the package (notarization or assessment)"; return 1; }
+  return 0; }
+ap_dmg_verify() { local _o # FILE TEAM: the image's own signature with the Team ID requirement, and Gatekeeper (open). Sets AP_WHY.
+  wsp_run _o codesign --verify --strict "-R=$(ap_req "$2")" "$1"
+  [ "$WSP_RC" -eq 0 ] || { AP_WHY="the disk image is unsigned or not signed by the allowed Team ID"; return 1; }
+  wsp_run _o spctl -a -t open --context context:primary-signature "$1"
+  [ "$WSP_RC" -eq 0 ] || { AP_WHY="Gatekeeper (spctl, open) rejects the disk image (notarization or assessment)"; return 1; }
+  return 0; }
+ap_app_verify() { local _o # APP TEAM: a real bundle folder, deep strict signature with the Team ID requirement, Gatekeeper (exec)
+  if [ -L "$1" ] || [ ! -d "$1" ]; then AP_WHY="not a real app folder (missing or a symlink)"; return 1; fi
+  wsp_run _o codesign --verify --deep --strict "-R=$(ap_req "$2")" "$1"
+  [ "$WSP_RC" -eq 0 ] || { AP_WHY="the app signature is invalid or not from the allowed Team ID"; return 1; }
+  wsp_run _o spctl -a -t exec "$1"
+  [ "$WSP_RC" -eq 0 ] || { AP_WHY="Gatekeeper (spctl, exec) rejects the app"; return 1; }
+  return 0; }
+ap_dst_ok() { local _o _m _g # /Applications: real folder, owner root, no ACL, mode 0755 or 0775 with group admin (the macOS default)
+  [ -d "$APPS" ] && [ ! -L "$APPS" ] || return 1
+  _o=$(wsp_stat_owner "$APPS") || return 1
+  wsp_fl_owner_ok "$_o" || return 1
+  wsp_no_acl "$APPS" || return 1
+  _m=$(wsp_stat_mode "$APPS") || return 1
+  case "$_m" in
+    755) ;;
+    775) if [ "$WSP_FIXTURE" -eq 0 ]; then _g=$(wsp_stat_group "$APPS") || return 1; [ "$_g" = admin ] || return 1; fi;;
+    *) return 1;;
+  esac
+  wsp_trusted_dir "${APPS%/*}/" "$WSP_OPERATOR"; }   # the parent ("/" on a Mac) and its ancestors
+ap_detach() { local _o # detach the image at MNT (normal, then -force), then remove the empty mount point. 0 only when detached.
+  [ "$AP_MOUNTED" -eq 1 ] || return 0
+  wsp_run _o hdiutil detach "$MNT"
+  if [ "$WSP_RC" -ne 0 ]; then wsp_run _o hdiutil detach -force "$MNT"; fi
+  [ "$WSP_RC" -eq 0 ] || { AP_KEEP=1; return 1; }
+  AP_MOUNTED=0; rmdir "$MNT" 2>/dev/null; MNT=""; return 0; }
+# d17 (reviewer SUG-2): a signal can arrive while hdiutil attach runs, before AP_MOUNTED is set. A mount point that cannot be removed is
+# not empty, so the image is mounted there: it is detached too. The root-only staging folder is removed once nothing is mounted.
+ap_on_exit() {
+  if [ "$AP_MOUNTED" -eq 0 ] && [ -n "$MNT" ] && ! rmdir "$MNT" 2>/dev/null; then AP_MOUNTED=1; fi
+  ap_detach
+  if [ -n "$STAGE" ] && [ "$AP_KEEP" -eq 0 ] && [ "$AP_MOUNTED" -eq 0 ]; then wsp_backup_discard "$STAGE"; fi; }
+trap 'ap_on_exit' EXIT
+trap 'exit 3' INT TERM HUP
+ap_bad() { # ID TEXT
+  wsp_status FAILED R11 "$1" "$2" installed failed record; }
+ap_stage() { # the root-only staging folder (policy folder), made once
+  [ -z "$STAGE" ] || return 0
+  STAGE=$(mktemp -d "$WSP_BASE/.apps-stage.XXXXXX") || { STAGE=""; return 1; }
+  chmod 700 "$STAGE" || return 1; }
+ap_install() { local _id=$1 _l=$2 _f=$3 _t=$4 _b=$5 _src="$AROOT/$3" _st _o _ia _app="$APPS/$5.app" _rr # ONE package (apply). 0 only if verified.
+  ap_stage || { ap_bad "$_id" "the staging folder could not be created; nothing installed"; return 1; }
+  _st="$STAGE/$_id.${_f##*.}"
+  ap_pkg_file_ok "$_src" || { ap_bad "$_id" "the package changed or is no longer safe right before the copy ($AP_WHY); nothing installed"; return 1; }
+  cp -P "$_src" "$_st" || { ap_bad "$_id" "the copy into the staging folder failed; nothing installed"; return 1; }
+  cmp -s "$_src" "$_st" || { ap_bad "$_id" "the staged copy does not match the source; nothing installed"; return 1; }
+  chmod 600 "$_st" || { ap_bad "$_id" "the staged copy could not be protected; nothing installed"; return 1; }
+  if [ -e "$_app" ] || [ -L "$_app" ]; then ap_bad "$_id" "something appeared at the app name before the install; nothing installed"; return 1; fi
+  case "$_f" in
+    *.pkg)
+      ap_pkg_verify "$_st" "$_t" || { ap_bad "$_id" "the staged copy failed verification: $AP_WHY; nothing installed"; return 1; }
+      wsp_run _o installer -pkg "$_st" -target "${WSP_ROOT:-/}"
+      [ "$WSP_RC" -eq 0 ] || { wsp_status FAILED R11 "$_id" "installer failed; check the app (a vendor package can leave a partial install)" installed failed record "$WSP_RC" "$WSP_ERRCLASS"; return 1; };;
+    *.dmg)
+      ap_dmg_verify "$_st" "$_t" || { ap_bad "$_id" "the staged copy failed verification: $AP_WHY; nothing installed"; return 1; }
+      MNT=$(mktemp -d "$STAGE/mnt.XXXXXX") || { MNT=""; ap_bad "$_id" "the mount point could not be created; nothing installed"; return 1; }
+      wsp_run _o hdiutil attach -nobrowse -readonly -noautoopen -mountpoint "$MNT" "$_st"
+      if [ "$WSP_RC" -ne 0 ]; then
+        if ! rmdir "$MNT" 2>/dev/null; then AP_MOUNTED=1; ap_detach; else MNT=""; fi   # a busy mount point means something is mounted: detach it
+        ap_bad "$_id" "the disk image could not be attached read-only; nothing installed"; return 1; fi
+      AP_MOUNTED=1; _ia="$MNT/$_b.app"
+      ap_app_verify "$_ia" "$_t" || { ap_detach; ap_bad "$_id" "the app in the disk image failed verification: $AP_WHY; nothing installed"; return 1; }
+      ditto "$_ia" "$STAGE/$_id.app" || { ap_detach; ap_bad "$_id" "the copy out of the disk image failed; nothing installed"; return 1; }
+      ap_detach || { ap_bad "$_id" "the disk image could not be detached; nothing installed (the staging folder is kept)"; return 1; }
+      chown -R -h root:wheel "$STAGE/$_id.app" || { ap_bad "$_id" "the explicit owner could not be set on the staged app; nothing installed"; return 1; }
+      # d16 draft2 (reviewer S-2): code signatures do not cover file modes; no group/other-writable entry may reach /Applications
+      chmod -R go-w "$STAGE/$_id.app" || { ap_bad "$_id" "group/other write could not be removed from the staged app; nothing installed"; return 1; }
+      ap_app_verify "$STAGE/$_id.app" "$_t" || { ap_bad "$_id" "the staged app failed verification: $AP_WHY; nothing installed"; return 1; }
+      wsp_rename_nofollow "$STAGE/$_id.app" "$_app"; _rr=$?
+      case "$_rr" in
+        0) ;;
+        2) ap_bad "$_id" "something appeared at the app name right before the placement; refused, nothing placed or written behind it"; return 1;;
+        3) ap_bad "$_id" "the placement failed and its undo failed; a partial root-only folder may remain at the app name"; return 1;;
+        *) ap_bad "$_id" "the placement into the Applications folder failed; nothing was placed"; return 1;;
+      esac;;
+  esac
+  ap_app_verify "$_app" "$_t" || { ap_bad "$_id" "installed, but the app fails verification: $AP_WHY; not removed automatically"; return 1; }
+  wsp_status CHANGED_VERIFIED R11 "$_id" "installed from the verified local package; app signature, Team ID and Gatekeeper verified" installed "team:$_t" record
+  return 0; }
+# ---- configuration and pre-checks (read only, both modes) ----
+why=""; AROOT=""; listok=0
+if [ -n "$applist" ] && wsp_app_list "$applist"; then listok=1; fi
+TMAP=""; PMAP=""; tok=0; pok=0
+if [ "$listok" -eq 1 ] && ap_map_ok "$teams" team; then tok=1; TMAP=$AP_MAP; fi
+if [ "$listok" -eq 1 ] && ap_map_ok "$pkgs" file; then pok=1; PMAP=$AP_MAP; fi
+# S-2 (BLOCKING once apply is restored): no Team ID allowlist, no install. Checked first.
+if [ -z "$teams" ]; then why="APP_TEAM_IDS is unset or empty (S-2: no install without a Team ID allowlist)"
+elif [ "$tok" -ne 1 ]; then why="APP_TEAM_IDS is not valid (Label=TEAMID, 10 of A-Z 0-9, non-store APP_LIST labels, no duplicate)"; fi
+[ -n "$why" ] || [ "$listok" -eq 1 ] || why="APP_LIST is unset or malformed"
+[ -n "$why" ] || [ -n "$pkgs" ] || why="APP_PACKAGES is unset (nothing to install)"
+[ -n "$why" ] || [ "$pok" -eq 1 ] || why="APP_PACKAGES is not valid (Label=FILE.pkg or FILE.dmg, plain names, non-store labels)"
+[ -n "$why" ] || [ "$acons" = yes ] || why="APP_INSTALL_CONSENT=yes is not set in the root-owned policy"
+if [ -n "$pkgs" ]; then
+  if [ -z "$teams" ] || [ "$tok" -ne 1 ]; then wsp_status BLOCKED_POLICY R11 install-config "APP_TEAM_IDS unset, empty or malformed (S-2); no package is checked or installed" team-allowlist unset record
+  elif [ "$pok" -ne 1 ]; then wsp_status BLOCKED_POLICY R11 install-config "APP_PACKAGES malformed (Label=FILE.pkg or FILE.dmg, plain names); nothing is installed" valid malformed record
+  elif [ -z "$asrc" ] || ! ap_src_ok "$asrc"; then
+    [ -n "$why" ] || why="APP_SOURCE_DIR is unset or not a valid absolute folder"
+    wsp_status BLOCKED_POLICY R11 install-config "APP_SOURCE_DIR unset or not valid (absolute, plain characters, no dot segments); nothing is installed" valid invalid record
+  elif [ ! -d "$WSP_ROOT$asrc" ] || [ -L "$WSP_ROOT$asrc" ]; then
+    [ -n "$why" ] || why="the package folder is not attached or is a symlink"
+    wsp_status PENDING_CONSENT R11 install-source "package folder not attached or is a symlink" present absent record
+  elif ! wsp_trusted_dir "$WSP_ROOT$asrc" "$WSP_OPERATOR"; then
+    [ -n "$why" ] || why="the package folder or an ancestor is not a trusted folder"
+    wsp_status BLOCKED_POLICY R11 install-source "package folder or an ancestor is a symlink, untrusted owner or mode, or has an ACL; nothing is installed" present untrusted record
+  else
+    AROOT="$WSP_ROOT$asrc"
+  fi
+fi
+ID_A=(); LB_A=(); FI_A=(); TE_A=(); BU_A=(); ST_A=(); WH_A=()
+if [ -n "$AROOT" ]; then
+  _ifs=$IFS; set -f; IFS=$WSP_NL
+  # shellcheck disable=SC2086 # intentional newline split of validated entries (globbing off)
+  set -- $PMAP
+  IFS=$_ifs; set +f
+  for pe in "$@"; do
+    lb=${pe%%|*}; fi=${pe#*|}; ap_nonstore "$lb"; bu=$AP_BUNDLE; ck=${lb// /-}
+    te=$(ap_get "$TMAP" "$lb") || te=""
+    st=ready; AP_WHY=""
+    if [ -z "$te" ]; then st=blocked; AP_WHY="no APP_TEAM_IDS entry for this app (S-2)"
+    elif [ -L "$APPS/$bu.app" ]; then st=blocked; AP_WHY="a symlink is at the app name"
+    elif [ -e "$APPS/$bu.app" ]; then
+      if ap_app_verify "$APPS/$bu.app" "$te"; then st=present; else st=blocked; AP_WHY="an app is already at the name but fails verification ($AP_WHY); not replaced"; fi
+    elif ! ap_pkg_file_ok "$AROOT/$fi"; then st=blocked
+    else
+      case "$fi" in *.pkg) ap_pkg_verify "$AROOT/$fi" "$te" || st=blocked;; *) ap_dmg_verify "$AROOT/$fi" "$te" || st=blocked;; esac
+    fi
+    ID_A[${#ID_A[@]}]="install-$ck"; LB_A[${#LB_A[@]}]=$lb; FI_A[${#FI_A[@]}]=$fi; TE_A[${#TE_A[@]}]=$te; BU_A[${#BU_A[@]}]=$bu; ST_A[${#ST_A[@]}]=$st; WH_A[${#WH_A[@]}]=$AP_WHY
+  done
+fi
+nap=${#ID_A[@]}; nready=0; rlist=""; i=0
+while [ "$i" -lt "$nap" ]; do
+  case "${ST_A[$i]}" in
+    ready) nready=$((nready+1)); rlist="$rlist ${LB_A[$i]} (Team ID ${TE_A[$i]});";;
+    blocked) [ -n "$why" ] || why="a configured package is missing, unsafe or fails verification (every package must pass)";;
+  esac
+  i=$((i+1)); done
+[ -n "$why" ] || [ -n "$AROOT" ] || why="the package folder is not usable"
+[ -n "$why" ] || ap_dst_ok || why="the Applications folder is not a trusted destination (symlink, owner, mode or ACL)"
+[ -n "$why" ] || wsp_trusted_dir "$WSP_BASE" || why="the policy folder (staging) is not a trusted folder"
+if [ "$WSP_MODE" = apply ] && [ -n "$why" ]; then
+  WSP_MODE=inspect
+  wsp_status BLOCKED_POLICY P01 apply-gate "apply refused, running inspect only: $why" pass blocked record
+fi
+# The module's OWN typed APPLY (d16): asked on the terminal after every check passed, before the first write. No terminal = no install.
+if [ "$WSP_MODE" = apply ] && [ "$nready" -gt 0 ]; then
+  if ! wsp_confirm "Install $nready app(s) from verified local packages:$rlist" "APPLY"; then
+    WSP_MODE=inspect
+    wsp_status PENDING_CONSENT P01 apply-gate "the typed APPLY for the app install was not given (no terminal or another answer); nothing is installed" confirmed not-confirmed manual
+  fi
+fi
+stop=0; i=0
+while [ "$i" -lt "$nap" ]; do
+  id=${ID_A[$i]}; st=${ST_A[$i]}
+  case "$st" in
+    present) wsp_status ALREADY_CORRECT R11 "$id" "already installed and verified (signature, Team ID, Gatekeeper); not reinstalled" installed "team:${TE_A[$i]}" record;;
+    blocked) case "${WH_A[$i]}" in "the package file is missing") wsp_status FAILED R11 "$id" "the package file is missing in the package folder" installed absent record;;
+               *) wsp_status BLOCKED_POLICY R11 "$id" "refused: ${WH_A[$i]}; nothing is installed" verified refused record;; esac;;
+    ready)
+      if [ "$WSP_MODE" = apply ]; then
+        if [ "$stop" -eq 1 ]; then ap_bad "$id" "not attempted: an earlier install failed"
+        else ap_install "$id" "${LB_A[$i]}" "${FI_A[$i]}" "${TE_A[$i]}" "${BU_A[$i]}" || stop=1; fi
+      else
+        wsp_status PROPOSED R11 "$id" "package verified (signature, Team ID, Gatekeeper); would be installed after the typed APPLY" installed absent record
+      fi;;
+  esac
+  i=$((i+1)); done
+ap_detach || true
+if [ -n "$STAGE" ] && [ "$AP_KEEP" -eq 0 ]; then wsp_backup_discard "$STAGE"; fi
+# ---- installed-app evidence (unchanged from d15; reads only) ----
+if [ -z "$applist" ]; then wsp_status BLOCKED_POLICY R11 app-list "APP_LIST not set in policy.conf (operator config; see example)" listed unset none
+elif [ "$listok" -ne 1 ]; then wsp_status BLOCKED_POLICY R11 app-list "APP_LIST malformed (Label/Bundle[/store] entries separated by colons)" listed malformed none
+else
+_ifs=$IFS; set -f; IFS=$WSP_NL
+# shellcheck disable=SC2086 # intentional newline split of validated entries (globbing off)
+# NOTE: the next line replaces the positional parameters ($@); options were already parsed and $@ is not used again.
+set -- $WSP_APP_ENTRIES
+IFS=$_ifs; set +f
+for pair in "$@"; do
+  lbl=${pair%%|*}; _r=${pair#*|}; bundle=${_r%%|*}; store=${_r#*|}
+  app="$WSP_ROOT/Applications/$bundle.app"
+  ck=${lbl// /-}
+  if [ ! -d "$app" ] || [ -L "$app" ]; then
+    if [ "$store" = store ]; then wsp_status PENDING_CONSENT R12 "app-$ck" "App Store delivery needs designated account or Apps and Books (D15); no sign-in or purchase" installed absent record
+    else wsp_status PENDING_CONSENT R11 "app-$ck" "absent; supply the vendor package in APP_SOURCE_DIR and APP_PACKAGES (D15); the suite never downloads" installed absent record; fi
+    continue
+  fi
+  wsp_run cs codesign --verify --deep --strict "$app"; csrc=$WSP_RC
+  wsp_run sp spctl -a -t exec "$app"; sprc=$WSP_RC
+  wsp_run ver defaults read "$app/Contents/Info" CFBundleShortVersionString; vrc=$WSP_RC
+  wsp_run ex defaults read "$app/Contents/Info" CFBundleExecutable; erc=$WSP_RC
+  if [ "$vrc" -ne 0 ] || [ "$erc" -ne 0 ] || [ -z "$ex" ] || [ -z "$ver" ]; then
+    wsp_status UNKNOWN R11 "app-$ck" "bundle executable or version unreadable" signed-accepted-arch unknown record "$WSP_RC" "$WSP_ERRCLASS"; continue; fi
+  case "$ex" in */*|.|..) wsp_status UNKNOWN R11 "app-$ck" "bundle executable name malformed" signed-accepted-arch unknown record; continue;; esac
+  wsp_run lip lipo -archs "$app/Contents/MacOS/$ex"
+  if [ "$WSP_RC" -ne 0 ] || [ -z "$arch" ]; then archok=unknown; else case " $lip " in *" $arch "*) archok=yes;; *) archok=no;; esac; fi
+  if [ "$csrc" -eq 0 ] && [ "$sprc" -eq 0 ] && [ "$archok" = yes ]; then
+    wsp_status PENDING_LOGIN R11 "app-$ck" "signature valid, Gatekeeper accepted, arch ok; first launch and sign-in pending" signed-accepted-arch "signed-accepted-$archok:$ver" effective-cli
+  elif [ "$archok" = unknown ]; then wsp_status UNKNOWN R11 "app-$ck" "architecture probe failed" signed-accepted-arch unknown effective-cli
+  else wsp_status FAILED R11 "app-$ck" "signature/assessment/arch check failed" signed-accepted-arch "cs$csrc-sp$sprc-arch$archok" effective-cli "$csrc" "$WSP_ERRCLASS"; fi
+done
+fi
+wsp_status PENDING_LOGIN R27 default-browser "operator-selected default browser needs user confirmation in session" "" "" manual
+wsp_status PENDING_CONSENT R34 app-privacy-consent "Accessibility and Screen Recording consent (conferencing apps) by user (or PPPC Accessibility via MDM); never TCC edits" "" "" manual
+wsp_finish

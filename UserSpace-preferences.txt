@@ -1,0 +1,206 @@
+#!/bin/bash
+# UserSpace-preferences.txt - user preference writer, target user's own session (module 2)
+# Account: selected target user in own GUI login (see below).
+# Root: NEVER.
+# Bash 3.2, stock macOS tools only.
+# Dry run (inspect) is the default; changes happen only with --mode apply.
+# No secret is ever accepted as an argument, written to a log or reported.
+# UserSpace-preferences.txt - per-user preference writer (module 2, d13; first-login mode d14) - runs in the target user's OWN GUI session.
+# Usage: /bin/bash UserSpace-preferences.txt [--mode inspect|apply|verify] [--firstlogin] [-h]
+# Account: the selected TARGET user, in that user's own GUI (Aqua) login. Root: NEVER (refuses EUID 0, so root never
+#   writes into a logged-in user's preference daemon). No sudo, no secrets. The user must be listed in session policy USERS.
+# The preference list is NOT built in: it is read from the operator file user-prefs.conf in the session policy directory
+#   (one entry per line:  id|domain|key|type|value, type bool|int|string; see the interface). Only domains on the suite
+#   allowlist are touched. Dry run (inspect) is the default. apply needs --mode apply AND USER_PREFS_CONSENT=yes in the
+#   root-owned session policy, a readable MDM state, the typed word APPLY on a terminal (no terminal = no apply, PENDING_CONSENT), and for EACH entry: no managed profile or MDM enrollment, a readable
+#   value of the same stored type, a checked backup of the plist (under the user's own Library), a read-back after the write.
+#   Stored values are never proof of visible behaviour: a final PENDING_LOGIN record asks for a look in System Settings.
+# --firstlogin (d14, module 3; needs --mode apply) is the mode the first-login LaunchAgent uses. It runs ONLY from the root-owned installed copy
+#   (the session folder's bin/). Two separate consents are needed (d15, owner Q9): (1) the root-written consent record firstlogin-consent.conf
+#   (bound to the SHA-256 of user-prefs.conf and to the exact USERS value: any mismatch, a missing record or an unreadable file =
+#   PENDING_CONSENT, nothing is written) and (2) this script's OWN typed word APPLY on a terminal, asked after the list is loaded and checked,
+#   with the summary of what will be applied. It is NOT the launcher's prompt and the launcher's answer is never reused. The login-time agent
+#   has no terminal, so at login it reports PENDING_CONSENT and writes nothing (never auto-apply): the user runs the installed script by hand in
+#   Terminal ("/bin/bash <session folder>/bin/UserSpace-preferences.txt --mode apply --firstlogin") and types APPLY. After a run with no FAILED
+#   record it writes a done marker (firstlogin.done) in the user's own Application Support/WorkstationProvisioning folder; with the marker present
+#   every later run exits 0 silently and does nothing. After ANY failed step (d15, owner Q4) NO marker is written, so the next run tries again; the
+#   first-login backup is ONE reused folder (backup/firstlogin-original) that keeps the pre-change originals, so repeated tries never pile up
+#   backups. The typed word APPLY is a consent step on a terminal, not authentication: any pty wrapper is a real terminal.
+# ---- trusted bootstrap (CR01) ------------------------------------------
+# Runs before anything else: fixed PATH, readonly EUID check, then trust checks
+# on the suite directory, every ancestor and the library, using only absolute
+# tool paths. The fixture hook is honoured only off macOS, as non-root, under a
+# canonical /tmp path; otherwise it is refused, never silently relaxed.
+set +x +a   # no tracing; no allexport (D3-03)
+# d14 (reviewer S1): every function that exists at this point was imported from the caller's environment (exported BASH_FUNC_*) or
+# defined by a BASH_ENV startup file; none is trusted, so all are discarded before the first tool name is resolved. BASH_ENV
+# itself has already been read by this shell (it cannot be cleared in time); unsetting it only protects the child shells.
+for _wsp_f in $(compgen -A function); do unset -f "$_wsp_f"; done
+unset BASH_ENV ENV
+PATH=/usr/bin:/bin:/usr/sbin:/sbin; export PATH
+case "${EUID:-x}" in ''|*[!0-9]*) echo "REFUSED: EUID unreadable" >&2; exit 4;; esac
+_wsp_os=$(/usr/bin/uname -s 2>/dev/null || /bin/uname -s)
+_wsp_fx=0
+if [ -n "${WSP_FIXTURE_ROOT:-}" ]; then
+  if [ "$_wsp_os" = Darwin ] || [ -d /System/Library/CoreServices ] || [ "$EUID" -eq 0 ]; then echo "REFUSED: fixture hook not allowed here" >&2; exit 4; fi
+  _wsp_c=$(cd "$WSP_FIXTURE_ROOT" 2>/dev/null && pwd -P) || { echo "REFUSED: fixture root" >&2; exit 4; }
+  case "$_wsp_c" in /tmp/?*) ;; *) echo "REFUSED: fixture root must canonically be under /tmp" >&2; exit 4;; esac
+  [ "$_wsp_c" = "${WSP_FIXTURE_ROOT%/}" ] || { echo "REFUSED: fixture root has a symlink" >&2; exit 4; }
+  _wsp_fx=1
+fi
+# Inherited suite-internal variables are discarded, including their export
+# attribute (documentation D4-1): unset removes both. Only the validated fixture hook stays.
+for _wsp_v in $(compgen -v WSP_); do case "$_wsp_v" in WSP_FIXTURE_ROOT) ;; *) unset "$_wsp_v";; esac; done
+[ "$_wsp_fx" -eq 1 ] || unset WSP_FIXTURE_ROOT
+_wsp_st() { if [ "$_wsp_os" = Darwin ]; then /usr/bin/stat -f "$1" "$2"; else /usr/bin/stat -c "$3" "$2"; fi; }
+_wsp_noacl() { # deny by default (D3-01): "+" refuses; "@" needs a one-line "ls -lde"
+  _wsp_l=$(/bin/ls -ld "$1" 2>/dev/null) || return 1
+  _wsp_l=${_wsp_l%% *}
+  case "$_wsp_l" in
+    ??????????|??????????.) return 0;;
+    ??????????@) _wsp_n=$(/bin/ls -lde "$1" 2>/dev/null) || return 1
+                 [ "$(printf '%s\n' "$_wsp_n" | /usr/bin/wc -l | /usr/bin/tr -d ' ')" = 1 ];;
+    *) return 1;;
+  esac
+}
+_wsp_trust() { # path: not symlink, no ACL, owner root|workstationadmin (fixture: caller), not group/world writable
+  [ -L "$1" ] && return 1
+  _wsp_noacl "$1" || return 1
+  _wsp_o=$(_wsp_st %Su "$1" %U) || return 1; _wsp_m=$(_wsp_st %Lp "$1" %a) || return 1
+  case "$_wsp_o" in root|workstationadmin) ;; *) [ "$_wsp_fx" -eq 1 ] && [ "$_wsp_o" = "$(/usr/bin/id -un)" ] || return 1;; esac
+  case "$_wsp_m" in *[2367]?|*[2367]) case "$_wsp_m" in 1???) [ -d "$1" ] && [ "$1" != "$_wsp_dir" ] || return 1;; *) return 1;; esac;; esac
+  return 0
+}
+case "$0" in /*) _wsp_self="$0";; *) _wsp_self="$(pwd -P)/$0";; esac
+_wsp_dir=$(cd "${_wsp_self%/*}" 2>/dev/null && pwd -P) || { echo "REFUSED: suite directory" >&2; exit 4; }
+_wsp_a="$_wsp_dir"
+while :; do _wsp_trust "$_wsp_a" || { echo "REFUSED: untrusted suite directory or ancestor" >&2; exit 4; }; [ "$_wsp_a" = / ] && break; _wsp_a=${_wsp_a%/*}; [ -n "$_wsp_a" ] || _wsp_a=/; done
+_wsp_lib="$_wsp_dir/workstationadmin-lib.txt"
+if ! { [ -f "$_wsp_lib" ] && _wsp_trust "$_wsp_lib"; }; then echo "REFUSED: library missing or untrusted" >&2; exit 4; fi
+_wsp_trust "$_wsp_dir/${_wsp_self##*/}" || { echo "REFUSED: entry script untrusted" >&2; exit 4; }
+# Residual risk: a process running as root or workstationadmin can still replace
+# files between this check and use. Those identities are trusted by design.
+# shellcheck source=/dev/null
+. "$_wsp_lib"
+WSP_MODULE="userspace-preferences"
+WSP_REPORT_TYPE="inspect"
+WSP_MODE=inspect
+FL=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -h|--help) wsp_help;;
+    --firstlogin) FL=1;;
+    --mode) shift; [ $# -gt 0 ] || wsp_usage "missing mode"
+            case "$1" in inspect|apply|verify) WSP_MODE="$1";; *) wsp_usage "bad mode";; esac;;
+    *) wsp_usage "unknown argument (secrets are never accepted as arguments)";;
+  esac
+  shift
+done
+[ "$FL" -eq 0 ] || [ "$WSP_MODE" = apply ] || wsp_usage "--firstlogin needs --mode apply"
+# Context guard for UserSpace- scripts (target user, own GUI session, no root).
+[ "$EUID" -ne 0 ] || wsp_refuse "must not run as root or with sudo"
+ctx=$(wsp_context_why target-gui); [ "$ctx" = ok ] || wsp_refuse "${ctx:-context check failed}"
+me=$(wsp_read_user) || wsp_refuse "identity unreadable or malformed"
+wsp_add_redact "$me"; wsp_add_redact "$HOME"
+wsp_add_host_redactions
+users=$(wsp_session_policy USERS) || users=""
+case " $users " in *" $me "*) ;; *) wsp_refuse "user is not listed in session policy USERS";; esac
+case "$HOME" in /*) ;; *) wsp_refuse "HOME is not an absolute path";; esac
+# d13 (reviewer S9): HOME comes from the environment, so it must equal the home folder of the directory record (dscl NFSHomeDirectory)
+wsp_run hl dscl . -read "/Users/$me" NFSHomeDirectory
+hv=""; if [ "$WSP_RC" -eq 0 ] && [ "$WSP_CAPTURE" = ok ]; then hv=$(wsp_field "$hl" NFSHomeDirectory:) || hv=""; fi
+[ -n "$hv" ] && [ "$WSP_ROOT$hv" = "$HOME" ] || wsp_refuse "HOME does not match the home folder of the directory record, or the record is unreadable"
+pdir="$HOME/Library/Preferences"
+for d in "$HOME" "$HOME/Library" "$pdir"; do
+  if [ -L "$d" ] || [ ! -d "$d" ] || [ "$(wsp_stat_owner "$d")" != "$me" ]; then wsp_refuse "home, Library or Preferences is missing, a symlink or not owned by the user"; fi
+done
+if [ "$FL" -eq 1 ]; then
+  # d14 (module 3): first-login mode only from the root-owned installed copy; a run with a done marker does nothing at all.
+  [ "$_wsp_dir" = "$WSP_FL_BIN" ] || wsp_refuse "first-login mode runs only from the installed copy in the session folder"
+  fl_rd="$HOME/Library/Application Support/WorkstationProvisioning"
+  if [ -L "$fl_rd" ] || { [ -e "$fl_rd" ] && [ ! -d "$fl_rd" ]; }; then wsp_refuse "report folder is a symlink or not a folder"; fi
+  if [ -d "$fl_rd" ]; then
+    wsp_fl_marker_state "$fl_rd" "$me"
+    case "$WSP_FLM" in
+      done) exit 0;;
+      none) ;;
+      *) wsp_refuse "the done marker is a symlink, not a regular file or owned by another account";;
+    esac
+  fi
+fi
+wsp_new_run_id
+wsp_header "$0"
+wsp_module_start
+if [ "$WSP_MODE" = apply ]; then
+  gate=""
+  [ "$WSP_FIXTURE" -eq 1 ] || [ "$_wsp_os" = Darwin ] || gate="not macOS"
+  cons=$(wsp_session_policy USER_PREFS_CONSENT) || cons=""
+  [ -n "$gate" ] || [ "$cons" = yes ] || gate="operator consent USER_PREFS_CONSENT=yes is not set in the session policy"
+  [ -n "$gate" ] || [ "$(wsp_mdm_state)" != unknown ] || gate="MDM enrollment state unreadable"
+  if [ -n "$gate" ]; then
+    WSP_MODE=inspect
+    wsp_status BLOCKED_POLICY P01 apply-gate "apply refused, running inspect only: $gate" pass blocked record
+  fi
+fi
+if ! wsp_prefs_load; then
+  wsp_status BLOCKED_POLICY R21 preferences-config "$WSP_PREF_WHY; nothing is changed" configured not-usable record
+  wsp_finish
+fi
+if [ "$WSP_MODE" = apply ]; then
+  if [ "$FL" -eq 1 ]; then
+    # d14 (module 3): the root-side apply-time decision replaces the typed word. Fail closed: anything but "ok" = PENDING_CONSENT, inspect only.
+    wsp_fl_consent_state
+    if [ "$WSP_FLC" != ok ]; then
+      WSP_MODE=inspect
+      wsp_fl_notify   # d15 S-5 (owner): fixed-text notice to the logged-in user; report-only, never changes the mode or the outcome
+      wsp_status PENDING_CONSENT P01 apply-gate "first-login consent record is $WSP_FLC (it must match the current preference list and user list); inspect only, nothing is changed; notify=$WSP_FL_NOTIFY ($WSP_FL_NOTIFY_EC)" firstlogin-consent none manual
+    fi
+    # d15 (owner Q9): the first-login apply has its OWN typed word APPLY (this script's prompt, not the launcher's), asked last, after the list
+    # is loaded and the record is valid. The login-time agent has no terminal: no terminal, EOF, a missing or a wrong word = PENDING_CONSENT, zero
+    # writes, no marker. Never an automatic apply.
+    if [ "$WSP_MODE" = apply ]; then
+      wsp_prefs_summary
+      if ! wsp_confirm_apply "First-login apply for this account (asked here, separately from the installer): $WSP_PREF_SUMMARY." "APPLY"; then
+        WSP_MODE=inspect
+        wsp_fl_notify   # d15 S-5 (owner): fixed-text notice to the logged-in user; report-only, never changes the mode or the outcome
+        wsp_status PENDING_CONSENT P01 apply-gate "first-login apply needs its own typed word APPLY on a terminal; none was given or there is no terminal; inspect only, nothing is changed; notify=$WSP_FL_NOTIFY ($WSP_FL_NOTIFY_EC)" firstlogin-typed-APPLY none manual
+      fi
+    fi
+  else
+    # d13/d14 (S3): apply needs BOTH the consent key and the typed word APPLY on a terminal, asked only AFTER the list is loaded and
+    # validated, with a summary of what will be applied. No terminal = refused; dry run continues, nothing is written.
+    wsp_prefs_summary
+    if ! wsp_confirm_apply "Apply mode changes the preferences of this account: $WSP_PREF_SUMMARY." "APPLY"; then
+      WSP_MODE=inspect
+      wsp_status PENDING_CONSENT P01 apply-gate "apply needs the typed word APPLY on a terminal; none was given or there is no terminal; running inspect only, nothing is changed" typed-APPLY none manual
+    fi
+  fi
+fi
+wsp_prefs_profile_load
+WSP_PE_PLISTDIR="$pdir"; WSP_PE_DOMDIR=""; WSP_PE_BKROOT="$HOME/Library/Application Support/WorkstationProvisioning/backup"
+[ "$FL" -eq 0 ] || WSP_PE_BKREUSE=1   # d15 (owner Q4): first-login mode keeps ONE reused backup folder (backup/firstlogin-original), never one per try
+WSP_PE_LABEL=""; WSP_PE_HOME="$HOME"; WSP_PE_USER="$me"; WSP_UPREF_AS=""
+_ifs=$IFS; set -f; IFS=$WSP_NL
+# shellcheck disable=SC2086 # intentional split of the validated entry list (globbing off)
+set -- $WSP_PREF_ENTRIES
+IFS=$_ifs; set +f
+for ent in "$@"; do wsp_pref_entry "$ent"; done
+wsp_status PENDING_LOGIN R21 effective-settings-view "stored values only were read back; confirm the behaviour in System Settings (backup= shows the backup folder under your home folder)" "" "" manual
+if [ "$FL" -eq 1 ] && [ "$WSP_MODE" = apply ]; then
+  # d14 (module 3): the list was applied in this run (every gate passed): write the done marker so that no later login does anything.
+  # d15 (owner Q4): NO marker after any failed step (a FAILED record, exit 3): the next run tries again. The marker records the exit status of
+  # a run without a FAILED record (2 = incomplete, which includes the final PENDING_LOGIN note, or 0). A failure to write it is a FAILED record
+  # (the next login would run again, which is safe: every entry is idempotent and the first-login backup is reused, not repeated).
+  if [ "${WSP_FAILED:-0}" -eq 1 ]; then
+    wsp_status FAILED R01 firstlogin-marker "a step failed: no done marker is written, so the next run tries again (the first-login backup is reused, not repeated)" present absent record
+  else
+    if [ "${WSP_INCOMPLETE:-0}" -eq 1 ]; then fl_rc=2; else fl_rc=0; fi
+    [ -d "$fl_rd" ] || mkdir -p -m 700 "$fl_rd"   # absent when every entry was already correct (no backup was needed); a failure shows up as the marker FAILED below
+    if wsp_fl_marker_write "$fl_rd" "$fl_rc" "$WSP_RUN_ID"; then
+      wsp_status CHANGED_VERIFIED R01 firstlogin-marker "done marker written; later logins do nothing (remove the marker file to run again)" present present record
+    else
+      wsp_status FAILED R01 firstlogin-marker "done marker could not be written; the next login will run again" present absent record
+    fi
+  fi
+fi
+wsp_finish

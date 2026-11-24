@@ -1,0 +1,476 @@
+D18 draft5 actual requirement coverage matrix
+Locked to d18 draft5. PARTIAL, not Mac-validated.
+Archive SHA256 ae0ccc3fd55331372bcb219bb602fd37a697904d42ecbf5f99d513796bc57241.
+Only frozen archive code was used. No evolving working-tree code is covered.
+All 42 IDs are mapped to observations, disabled paths, guided steps, or manual gaps.
+This is documentation completeness, not full automation or live acceptance.
+Module shorthand names mean workstationadmin-mod-<module>.txt. lib means workstationadmin-lib.txt.
+The former userspace-firstlogin script is removed from this archive. The first-login agent is UserSpace-preferences.txt --mode apply --firstlogin from the installed copy.
+userspace-preferences means UserSpace-preferences.txt, the logged-in module-2 path.
+userprefs means workstationadmin-mod-userprefs.txt, the offline launcher module.
+userspace-audit means the frozen suite UserSpace-audit.txt, not the worker original.
+Scope/confidence labels are from source requirements, not validation grades.
+Use canonical worksheet for decisions. Unset policy blocks affected apply only.
+No manual evidence ingestion exists. Operator acceptance remains a separate record.
+Target audit reads approved TARGET_OS_MAJOR from trusted session policy.
+Missing/mismatched baseline refuses; authorized override remains unvalidated, never a pass.
+No automated session-policy installer is provided. The first-login LaunchAgent is installed by module 3.
+All live acceptance is NOT RUN. Every acceptance test below needs separate authorization.
+
+R01
+Scope and source confidence: S,W,O,L,C | H/T
+Actual coverage: partial; first-login installer and agent restored in this draft; not Mac-validated.
+Code reference: launcher; preflight; firstlogin; UserSpace-preferences --firstlogin; userspace-firstlogin remains superseded inspect-only.
+Observed implementation: Privileged mandatory preflight gates selected apply. Module-local apply checks exist. The firstlogin installer, when apply is authorized, installs the session bin copies, the LaunchAgent plist, and the consent record, in that order, and writes the consent record last. It runs no launchctl command and writes nothing into any user home. The agent is the installed UserSpace-preferences.txt --mode apply --firstlogin. A regular firstlogin.done marker owned by the user exits 0 with no write. At login there is no terminal, so the agent reports PENDING_CONSENT and writes nothing; the user must run the installed copy in Terminal and type APPLY. The notification shows for each first-login run that stops at PENDING_CONSENT, including that Terminal hand-run. A run without --firstlogin does not show a notification. The PENDING_CONSENT record detail ends with notify=shown (none) or notify=failed (not-found|other|timeout). A failed first-login apply writes no marker, and the next run tries again. Backups use one reused firstlogin-original folder. UserSpace-firstlogin.txt is removed from this archive. Session baseline key is now read correctly; its approved value and trusted file remain prerequisites. launchd behaviour is not validated.
+Policy/manual gate: Canonical R01 source and P01-P11/D01-D34 worksheet crosswalk.
+Acceptance test: Test fresh run, second run, and resume on a disposable Mac. Verify operator identity and target-session completion.
+Live acceptance: NOT RUN.
+Documentation reference: plan sections 2-9; runbook sections 1-9; canonical worksheet.
+
+R02
+Scope and source confidence: All scopes | H/T
+Actual coverage: partial.
+Code reference: lib; all modules.
+Observed implementation: Statuses, held report descriptor, diagnostic IDs, history and state comparison exist. No manual evidence ingestion. No FileVault export state or saved-file check exists. Registry root/0600/ancestry trust is checked before use. Detected ACLs are refused, including extra lines behind @. Objects are path-checked, not pinned. D7 independent rerun and native race/ACL tests remain pending.
+Policy/manual gate: Canonical R02 source and P01-P11/D01-D34 worksheet crosswalk.
+Acceptance test: Inject failure. Verify stable machine and target identity, secret-free status, preserved prior state, and no duplicate accounts, aliases, or Dock tiles.
+Live acceptance: NOT RUN.
+Documentation reference: plan sections 2-9; runbook sections 1-9; canonical worksheet.
+
+R03
+Scope and source confidence: W,C | H/G
+Actual coverage: partial/guided.
+Code reference: preflight; accounts; userspace-audit.
+Observed implementation: Checks operator existence and admin role. Does not recreate operator. Power, Setup Assistant, picture, full home and expected-UID acceptance remain manual.
+Policy/manual gate: Canonical R03 source and P01-P11/D01-D34 worksheet crosswalk.
+Acceptance test: Verify workstationadmin identity, admin membership, initialized home, and Owl picture. Do not recreate the existing account.
+Live acceptance: NOT RUN.
+Documentation reference: plan sections 2-9; runbook sections 1-9; canonical worksheet.
+
+R04
+Scope and source confidence: S,C; O; L for picture if needed | H/T
+Actual coverage: guided/manual; partial observations.
+Code reference: accounts; userspace-audit.
+Observed implementation: Registers prompted display/short name/purpose. Account creation is guided Settings only; sysadminctl creation removed. Existing registries require root ownership, exact 0600, regular-file and ACL/ancestry trust before UID/admin/home/token observations. No password reset, role repair, account creation, actual login, or unlock automation.
+Policy/manual gate: Canonical R04 source and P01-P11/D01-D34 worksheet crosswalk.
+Acceptance test: Verify independent prompted identities, collisions, unique allocated UID, required ADMIN role, supported home and ownership. Test actual login separately from unlock. Never reset an existing account implicitly.
+Live acceptance: NOT RUN.
+Documentation reference: plan sections 2-9; runbook sections 1-9; canonical worksheet.
+
+R05
+Scope and source confidence: S,W,C | H/T/G
+Actual coverage: partial apply; manual uniqueness.
+Code reference: names; userspace-audit.
+Observed implementation: Validated private tag and {ASSET} templates produce exact preview and setters after NAMES. Explicit values no longer used. HostName never changed. The explicit-name-keys blocked record is removed. HostName reports UNSUPPORTED by design. Remaining token/naming policy and network uniqueness remain open.
+Policy/manual gate: Canonical R05 source and P01-P11/D01-D34 worksheet crosswalk.
+Acceptance test: Verify safe prompted tag, exact preview and applied template-derived names, NAMES confirmation, both setters/readback, network-safe label, and uniqueness. Resolve other naming tokens. Verify HostName stays unchanged and report any policy-required HostName change as manual/unimplemented.
+Live acceptance: NOT RUN.
+Documentation reference: plan sections 2-9; runbook sections 1-9; canonical worksheet.
+
+R06
+Scope and source confidence: S,C; M | H/G
+Actual coverage: manual; no migration implementation.
+Code reference: gates.
+Observed implementation: Always emits migration BLOCKED_POLICY. Does not ingest branch approval or migrate data.
+Policy/manual gate: Canonical R06 source and P01-P11/D01-D34 worksheet crosswalk.
+Acceptance test: Verify source, destination, backup, ownership, expected files, and test login. Do not merge identities or overwrite homes implicitly.
+Live acceptance: NOT RUN.
+Documentation reference: plan sections 2-9; runbook sections 1-9; canonical worksheet.
+
+R07
+Scope and source confidence: W | T
+Actual coverage: disabled apply; manual.
+Code reference: admin-session.
+Observed implementation: The admin-session Dock inventory writer remains removed. It emits UNSUPPORTED dock-apps and requires manual layout and visible launches. It does not read root-private Dock policy from unprivileged context. That path is out of scope by design, per the owner's decision of 19 November 2026, relayed by the coordinator, and is not unfinished work. Module 2 can apply operator-listed Dock keys that appear in the library table. Dock hot corners and *-immutable keys are not in the table. That does not restore tile inventory or layout.
+Policy/manual gate: Canonical R07 source and P01-P11/D01-D34 worksheet crosswalk.
+Acceptance test: Verify Finder then App Store. Verify Safari, Calendar, System Settings, Activity Monitor, Console, Disk Utility, Terminal, Migration Assistant, and TextEdit. Check launches and other users remain unchanged.
+Live acceptance: NOT RUN.
+Documentation reference: plan sections 2-9; runbook sections 1-9; canonical worksheet.
+
+R08
+Scope and source confidence: W; O then L if applied to target users | T/G
+Actual coverage: admin-session writer disabled; optional module-2 stored keys; partial stored observations.
+Code reference: admin-session; userspace-audit; userspace-preferences; userprefs.
+Observed implementation: The admin-session Finder writer remains disabled. That path is out of scope by design, per the owner's decision of 19 November 2026, relayed by the coordinator, and is not unfinished work. Operator observes six stored keys, target audit three. Module 2 can apply operator-listed Finder keys that appear in the library table, including ShowPathbar and ShowStatusBar. FXRemoveOldTrashItems and WarnOnEmptyTrash are deliberately not in the table. Sidebar, boot-disk behavior, and target-scope completion remain manual. Stored matches are pending, not effective proof.
+Policy/manual gate: Canonical R08 source and P01-P11/D01-D34 worksheet crosswalk.
+Acceptance test: Verify Path Bar, Status Bar, hard disks, connected servers, discovered boot-disk new-window target, home sidebar, hidden Bonjour and Recent Tags where available, and 30-day Trash removal in session.
+Live acceptance: NOT RUN.
+Documentation reference: plan sections 2-9; runbook sections 1-9; canonical worksheet.
+
+R09
+Scope and source confidence: W,S only if volume operation requires it | T/G
+Actual coverage: manual/unsupported.
+Code reference: preflight; admin-session.
+Observed implementation: SIP observation exists. Volume customization emits UNSUPPORTED. No icon implementation.
+Policy/manual gate: Canonical R09 source and P01-P11/D01-D34 worksheet crosswalk.
+Acceptance test: Verify model-appropriate authorized icon in Finder and retained prior icon. Record unavailable customization. Do not modify CoreTypes, SIP, or the sealed system volume.
+Live acceptance: NOT RUN.
+Documentation reference: plan sections 2-9; runbook sections 1-9; canonical worksheet.
+
+R10
+Scope and source confidence: S,O; L to verify user access | T/G
+Actual coverage: restored copy, not Mac-validated; aliases and locks manual.
+Code reference: shared; userspace-audit.
+Observed implementation: Module 4 copies operator-listed items into /Users/Shared after SHARED_COPY_CONSENT=yes, the root apply gate, and the launcher APPLY prompt. Placement uses wsp_rename_nofollow. If a folder placement fails and its undo also fails, the report says a partial root-only folder may remain at the name. If putting a replaced item back fails and its undo also fails, the report says a partial root-only folder may remain at the name and the rest stays in the backup. Copied files are published 0644. Audit readability uses the session SHARED_ITEMS value only. Aliases and locked flags remain manual.
+Policy/manual gate: Canonical R10 source and P01-P11/D01-D34 worksheet crosswalk.
+Acceptance test: Verify every SHARED_ITEMS entry from operator session config, including documentation shortcuts, approved bookmarks, icons, URL aliases, backgrounds, and templates named only in that private inventory. Verify aliases, locked flags, destinations, readability, metadata, and leading-space order. Do not normalize paths or use broad recursive permissions. Do not publish site bookmark or template names in these docs.
+Live acceptance: NOT RUN.
+Documentation reference: plan sections 2-9; runbook sections 1-9; canonical worksheet.
+
+R11
+Scope and source confidence: S,C; M | H/T/G
+Actual coverage: restored local signed install, not Mac-validated; first launch and sign-in remain manual.
+Code reference: apps; userspace-audit.
+Observed implementation: Module 5 installs only from a local vendor .pkg or .dmg in APP_SOURCE_DIR, after APP_INSTALL_CONSENT=yes, a per-label APP_TEAM_IDS allowlist, pre-checks, the launcher APPLY prompt, and the module's own typed APPLY. The suite never downloads. Unset or empty APP_TEAM_IDS is BLOCKED_POLICY apply-gate, checked first. Pre-check failures refuse the whole apply with zero writes. A failure during the install is partial (FAILED, exit 3); the suite does not uninstall. An existing app at the name is never replaced. Inspect still reports APP_LIST signature, assessment, version, and architecture evidence after the install step. Unset or malformed APP_LIST, including empty parts, trailing ":", empty third field, spaced Label edges, or BundleName leading "." or spaced edges, reports BLOCKED_POLICY for check app-list. License, update ownership, first launch, and sign-in remain manual. Native behavior and acceptance remain unvalidated.
+Policy/manual gate: Canonical R11 source and P01-P11/D01-D34 worksheet crosswalk.
+Acceptance test: Verify official source, signature, identity, architecture, version, and first launch for every APP_LIST entry. App presence alone is insufficient. Shared templates do not authorize installing an unrelated office app.
+Live acceptance: NOT RUN.
+Documentation reference: plan sections 2-9; runbook sections 1-9; canonical worksheet.
+
+R12
+Scope and source confidence: C,W or L; M | H/G
+Actual coverage: guided/manual.
+Code reference: apps; gates.
+Observed implementation: APP_LIST /store entries stay manual (PENDING_CONSENT). Absent Apple apps and licensing emit pending gates. No App Store sign-in, purchase, download, or managed assignment is performed by the suite.
+Policy/manual gate: Canonical R12 source and P01-P11/D01-D34 worksheet crosswalk.
+Acceptance test: Verify acquisition authorization, receipts or device assignment eligibility, usable apps, and supported future updates. No purchase or sign-in is authorized by this document.
+Live acceptance: NOT RUN.
+Documentation reference: plan sections 2-9; runbook sections 1-9; canonical worksheet.
+
+R13
+Scope and source confidence: O then L | T/G
+Actual coverage: manual; no target Dock setter.
+Code reference: userspace-firstlogin; userspace-audit.
+Observed implementation: Emits user-dock/dock pending records only. Does not build target Dock or validate the full required order. Module 2 does not restore Dock inventory even if an operator lists other dock-domain keys.
+Policy/manual gate: Canonical R13 source and P01-P11/D01-D34 worksheet crosswalk.
+Acceptance test: Verify the approved Dock inventory from operator config. Include built-in tiles that policy requires, every APP_LIST app that belongs on the Dock, and every SHARED_ITEMS alias or folder tile that belongs on the Dock. Check tile types, actual sections, launches, aliases, and first-login order. Approve any section-order compromise first. Do not hard-code site app or bookmark names in these docs.
+Live acceptance: NOT RUN.
+Documentation reference: plan sections 2-9; runbook sections 1-9; canonical worksheet.
+
+R14
+Scope and source confidence: S; M | H/T
+Actual coverage: partial.
+Code reference: firewall; userspace-audit.
+Observed implementation: Global firewall read and apply setter exist. Inbound and reboot acceptance remain manual. Audit marks enabled state pending rather than full acceptance.
+Policy/manual gate: Canonical R14 source and P01-P11/D01-D34 worksheet crosswalk.
+Acceptance test: Verify effective global enabled state and agreed inbound behavior after approved reboot. Do not add stealth, block-all, or unrelated rules.
+Live acceptance: NOT RUN.
+Documentation reference: plan sections 2-9; runbook sections 1-9; canonical worksheet.
+
+R15
+Scope and source confidence: S,C; M | H/G
+Actual coverage: partial record apply/manual.
+Code reference: ard; userspace-audit.
+Observed implementation: Kickstart changes operator-only ARD privileges; REMOVE confirms exclusions. Full post-change stored-user rescan exists, zero privileges treated as none, unknown records not certified. Actual service consent and controlled positive/negative tests remain manual.
+Policy/manual gate: Canonical R15 source and P01-P11/D01-D34 worksheet crosswalk.
+Acceptance test: Verify workstationadmin alone and all ARD privileges. Test actual authenticated control. Separately test valid-credential rejection for an excluded account including another admin where available. Repeat after resume or reboot. Service state alone is insufficient.
+Live acceptance: NOT RUN.
+Documentation reference: plan sections 2-9; runbook sections 1-9; canonical worksheet.
+
+R16
+Scope and source confidence: S,C; M | H/T/G
+Actual coverage: restored preference writer; inspect default; required fixed values; install and restart never performed.
+Code reference: updates.
+Observed implementation: Apply writes six stored preferences from policy.conf after a verified backup, a pre-write identity check, and a typed read-back. Required values come from the 9 November 2026 reviewer-worksheet decision dated 21:35 local time, not from operator choice. UPDATES_AUTO_CHECK, UPDATES_AUTO_DOWNLOAD, UPDATES_CONFIG_DATA, UPDATES_CRITICAL, and UPDATES_APP_STORE accept only on. UPDATES_MACOS_INSTALL (key AutomaticallyInstallMacOSUpdates, report label AutoInstallOSUpdates) accepts only off. All six keys must be present. Unset, malformed, or other values report BLOCKED_POLICY and write nothing. A SoftwareUpdate, commerce, appstore, applicationaccess, or ManagedClient payload, or MDM enrollment Yes, or Enrolled via DEP: Yes, reports BLOCKED_POLICY. An odd DEP line reports UNKNOWN. A Mac with only unrelated profiles reports UNKNOWN. Inspect emits PROPOSED with zero writes. The only interactive confirmation is the launcher APPLY prompt. Apply emits CHANGED_VERIFIED only after read-back. The written-key record carries the full backup directory in backup= and the last path component in the detail. Re-apply emits ALREADY_CORRECT. Fixed records are management-overrides, effective-settings-view PENDING_LOGIN, update-install PENDING_CONSENT, and rollback-manual PENDING_CONSENT. wsp_backup refuses a symlinked backup root and removes its own failed directory. No install, restart, or Apple Account action exists.
+Policy/manual gate: Canonical R16 source, P01-P11/D01-D34 worksheet crosswalk, and the required fixed policy keys.
+Acceptance test: Verify each stored preference matches the required value. Confirm AutomaticCheckEnabled agrees with softwareupdate --schedule. Confirm the AutoInstallOSUpdates check for AutomaticallyInstallMacOSUpdates is off. Confirm the toggles in System Settings, General, Software Update. Do not treat update-install, rollback-manual, or P09 authorization as completed by this writer. Do not infer upgrade authorization or an MDM deadline.
+Live acceptance: NOT RUN.
+Documentation reference: plan sections 2-9; runbook sections 1-9; canonical worksheet.
+
+R17
+Scope and source confidence: S,C; M | H/T
+Actual coverage: partial/manual.
+Code reference: updates; apps.
+Observed implementation: Checks spctl assessments enabled and installed app assessment. Does not repair disabled Gatekeeper or fully prove the Settings policy. Signed-app assessment gate remains pending.
+Policy/manual gate: Canonical R17 source and P01-P11/D01-D34 worksheet crosswalk.
+Acceptance test: Verify App Store and identified-developer policy and signed-app assessment. Do not bypass quarantine or approve unknown software.
+Live acceptance: NOT RUN.
+Documentation reference: plan sections 2-9; runbook sections 1-9; canonical worksheet.
+
+R18
+Scope and source confidence: S,C; M | H/G
+Actual coverage: scripted enable when off and configured; remaining unlock and restart checks manual.
+Code reference: filevault; accounts; userspace-audit.
+Observed implementation: When FileVault is off, FILEVAULT_CONSENT=yes, and FILEVAULT_KEY_DIR is valid, module 6 enables FileVault after the typed APPLY. The operator types the password into fdesetup. The module never disables, rotates, or retrieves a key. It still reads status, personal-key existence, operator list, and any-owner indication. Per-account token, ownership, unlock, and approved restart remain separate manual checks. Token parsing requires exit 0. Unknown architecture now yields UNKNOWN volume ownership, not an Intel exemption. Each required account still needs separate unlock and ownership evidence.
+Policy/manual gate: Canonical R18 source and P01-P11/D01-D34 worksheet crosswalk.
+Acceptance test: Verify personal recovery, encryption state or progress, secure tokens, required unlock users, applicable volume ownership, and scheduled restart unlock. Preserve workstationadmin and the last working unlock account.
+Live acceptance: NOT RUN.
+Documentation reference: plan sections 2-9; runbook sections 1-9; canonical worksheet.
+
+R19
+Scope and source confidence: C; M | H/G
+Actual coverage: scripted NEW-key file when this run turns FileVault on; external import remains manual.
+Code reference: filevault; userspace-audit.
+Observed implementation: Module 6 writes the NEW key only when this run turns FileVault on, to <asset-tag>-FileVault-recovery-key.txt in FILEVAULT_KEY_DIR, mode 600, owner the operator. The key is never printed, never placed in argv or the environment, and a key-shaped report value prints as [secret-shape]. FileVault already on: PENDING_CONSENT "no key exported", no rotation and no read. Both policy keys unset: PENDING_CONSENT "not configured", manual enable and save. A failed pre-check is BLOCKED_POLICY and does not enable FileVault. A failure after the enable may require a hand-made personal key; the operator must not restart. key-external-import remains PENDING_CONSENT with evidence=manual. There is no retrieval, rotation, cloud import, or evidence ingestion.
+Policy/manual gate: the key-file decision resolves plaintext NEW-key save as <asset-tag>-FileVault-recovery-key.txt in the operator-selected FILEVAULT_KEY_DIR, trusted parent, and 0600. No mandatory escrow. The manual external copy and the restart unlock test remain gates. Missing tools keep acceptance incomplete.
+Acceptance test: After an authorized apply, confirm locally that the new file is a regular file, mode 0600, owned by the operator, and named <asset-tag>-FileVault-recovery-key.txt, without putting the key in a report. Then copy the file to the approved external storage and keep key-external-import pending until that copy is done. Keep statuses only in shareable reports, with no key, filename, destination, or identity. Existing-key retrieval and rotation are not authorized. See runbook section 7 for the stop conditions, including "Do not restart" after a failed save.
+Live acceptance: NOT RUN.
+Documentation reference: plan sections 2-9; runbook sections 1-9; canonical worksheet.
+
+R20
+Scope and source confidence: S,C; M where supported | T/G
+Actual coverage: manual/unsupported.
+Code reference: updates; gates.
+Observed implementation: Emits UNSUPPORTED and manual-consent records. No mapped supported system-setting authorization operation.
+Policy/manual gate: Canonical R20 source and P01-P11/D01-D34 worksheet crosswalk.
+Acceptance test: Verify supported control and a protected-setting authentication test without an unwanted change. Record absent historical Advanced control as unsupported, not as a hidden-key success.
+Live acceptance: NOT RUN.
+Documentation reference: plan sections 2-9; runbook sections 1-9; canonical worksheet.
+
+R21
+Scope and source confidence: O,L; W when selected | T
+Actual coverage: restored module-2 writer for operator-listed allowlisted keys; inspect default; visible behaviour manual.
+Code reference: userspace-preferences; userprefs; userspace-firstlogin; userspace-audit; lib.
+Observed implementation: Module 2 writes operator-listed keys from user-prefs.conf through two entry points: UserSpace-preferences.txt as the listed user in that user's own session, and launcher module userprefs for a home that is not logged in and has no process of that UID. There are no built-in defaults. One syntax error, a repeated id, or a repeated (domain,key) pair rejects the whole file. Integers are canonical. Apply needs USER_PREFS_CONSENT=yes. The UserSpace path also needs the typed word APPLY on stdin; no terminal or a wrong answer is PENDING_CONSENT, inspect only, exit 2. The offline path uses the launcher APPLY prompt and has no second prompt. UserSpace-preferences refuses root. The allowlist is a fixed domain-to-key table in the library; configuration can only narrow it. The exact keys are listed in the plan. AppleShowScrollBars remains an allowed NSGlobalDomain key and is written only if the operator lists it. A Managed Preferences file for that plist blocks the entry. Offline writes also get an on-disk plutil check, at most three reads, and OWNER.txt beside the backup. Own-session backup= uses the ~/Library/Application Support/WorkstationProvisioning/backup/<dir> form. Offline backup= is the full absolute path. Firstlogin still observes a selected stored value and does not write. Audit observes stored keys, subject to the approved trusted session baseline. Success is CHANGED_VERIFIED for the stored value plus a closing PENDING_LOGIN record. Visible control remains manual.
+Policy/manual gate: Canonical R21 source, P01-P11/D01-D34 worksheet crosswalk, user-prefs.conf, USER_PREFS_CONSENT, and the library key table.
+Acceptance test: Verify Always in Settings and a scrollable application when that key is in the operator file. Confirm both backup= forms and the correct entry point for a logged-in versus not-logged-in home. Confirm a long unhyphenated id is not required.
+Live acceptance: NOT RUN.
+Documentation reference: plan sections 2-9; runbook sections 1-9; canonical worksheet.
+
+R22
+Scope and source confidence: O,L,C where required | T/G
+Actual coverage: optional module-2 stored write if configured; visible behaviour manual.
+Code reference: userspace-firstlogin; userspace-audit; userspace-preferences; userprefs.
+Observed implementation: There is no built-in 24-hour writer. Show24Hour on com.apple.menuextra.clock is in the library key table, so a listed entry in user-prefs.conf can be written through module 2. Firstlogin and audit still observe the stored clock key. Rendered date, locale behavior, menu clock and Lock Screen remain manual.
+Policy/manual gate: Canonical R22 source and P01-P11/D01-D34 worksheet crosswalk.
+Acceptance test: Verify rendered M/DD/YYYY examples, 24-hour menu time, and Lock Screen time. Do not change unrelated regional behavior.
+Live acceptance: NOT RUN.
+Documentation reference: plan sections 2-9; runbook sections 1-9; canonical worksheet.
+
+R23
+Scope and source confidence: L,C; M for supported restrictions | T/G
+Actual coverage: manual only.
+Code reference: gates.
+Observed implementation: Nearby-device ordering and decisions are described in a pending record. No control setters or behavior tests.
+Policy/manual gate: Canonical R23 source and P01-P11/D01-D34 worksheet crosswalk.
+Acceptance test: Verify ordered disabling of push-through then nearby pointer control, and AirPlay Receiver then Handoff. Verify approved AirDrop choice and inactive AirPlay Current User/password capability without enabling receiver. Never copy the login password.
+Live acceptance: NOT RUN.
+Documentation reference: plan sections 2-9; runbook sections 1-9; canonical worksheet.
+
+R24
+Scope and source confidence: O,L; M for supported restrictions | T/G
+Actual coverage: manual only.
+Code reference: gates.
+Observed implementation: Pending Apple Intelligence instruction only. No hardware-aware master-control implementation.
+Policy/manual gate: Canonical R24 source and P01-P11/D01-D34 worksheet crosswalk.
+Acceptance test: Verify available master control or supported restriction. Do not equate Apple Intelligence with all Siri functions. Resolve Siri visibility separately.
+Live acceptance: NOT RUN.
+Documentation reference: plan sections 2-9; runbook sections 1-9; canonical worksheet.
+
+R25
+Scope and source confidence: O,L | T/G
+Actual coverage: manual only.
+Code reference: gates.
+Observed implementation: Rendered menu-bar pending record only. No item setters or hardware-specific readback.
+Policy/manual gate: Canonical R25 source and P01-P11/D01-D34 worksheet crosswalk.
+Acceptance test: Verify Bluetooth and Sound always, battery and percentage where applicable, flashing clock separators, Spotlight, Siri, and Time Machine where available. Verify the rendered menu bar.
+Live acceptance: NOT RUN.
+Documentation reference: plan sections 2-9; runbook sections 1-9; canonical worksheet.
+
+R26
+Scope and source confidence: O,L | T/G
+Actual coverage: observation-only; remaining controls manual/unimplemented.
+Code reference: userspace-firstlogin; userspace-audit.
+Observed implementation: There is no built-in title-bar-double-click writer. Finder _FXShowPosixPathInTitle is in the library key table and can be written if listed. Dock hot corners (wvous-*) are deliberately not in the table. Stored observation remains. Stage Manager, wallpaper, and Hot Corners setters are absent. HOT_CORNERS_POLICY remains reader-allowlisted but unused.
+Policy/manual gate: Canonical R26 source and P01-P11/D01-D34 worksheet crosswalk.
+Acceptance test: Verify title-bar double-click minimizes, Stage Manager desktop items, wallpaper reveal only in Stage Manager, and approved Hot Corners. Do not change overall Stage Manager state implicitly.
+Live acceptance: NOT RUN.
+Documentation reference: plan sections 2-9; runbook sections 1-9; canonical worksheet.
+
+R27
+Scope and source confidence: L,C; M where a supported mechanism exists | T
+Actual coverage: manual only.
+Code reference: apps; gates.
+Observed implementation: Default-browser instruction only. Current suite audit has no LaunchServices HTTP/HTTPS handler check.
+Policy/manual gate: Canonical R27 source and P01-P11/D01-D34 worksheet crosswalk.
+Acceptance test: After the approved default browser from APP_LIST is installed, verify both HTTP and HTTPS open in that browser. Installation alone is not default registration.
+Live acceptance: NOT RUN.
+Documentation reference: plan sections 2-9; runbook sections 1-9; canonical worksheet.
+
+R28
+Scope and source confidence: S for power settings; O,L,C for user lock and saver | H/T/G
+Actual coverage: partial apply/manual.
+Code reference: power; gates.
+Observed implementation: pmset battery 20 and AC 30 display setters check command exit and readback. Hardware section absence UNSUPPORTED. Saver, password delay, Lock Screen time and actual lock remain manual. No invented system-sleep policy.
+Policy/manual gate: Canonical R28 source and P01-P11/D01-D34 worksheet crosswalk.
+Acceptance test: Verify saver 10 minutes, battery display 20, adapter display 30, and desktop display 30. Verify approved immediate or five-second password delay and actual lock authentication. Check 24-hour Lock Screen. Do not infer system-sleep policy.
+Live acceptance: NOT RUN.
+Documentation reference: plan sections 2-9; runbook sections 1-9; canonical worksheet.
+
+R29
+Scope and source confidence: O,L | T
+Actual coverage: manual only.
+Code reference: gates.
+Observed implementation: Spotlight feedback pending instruction only. No setter/readback.
+Policy/manual gate: Canonical R29 source and P01-P11/D01-D34 worksheet crosswalk.
+Acceptance test: Verify Help Apple Improve Search is off without changing unrelated Siri or diagnostics settings.
+Live acceptance: NOT RUN.
+Documentation reference: plan sections 2-9; runbook sections 1-9; canonical worksheet.
+
+R30
+Scope and source confidence: L,C; M only for supported notification payload settings | T/G
+Actual coverage: manual only.
+Code reference: gates.
+Observed implementation: Notification policy pending instruction only. No app inventory, per-app setter, revisit loop, or notification test.
+Policy/manual gate: Canonical R30 source and P01-P11/D01-D34 worksheet crosswalk.
+Acceptance test: Verify every registered app hides Lock Screen notifications except Find My. The exception does not enable Find My notifications. Test safely. Keep unregistered apps pending and repeat after launches.
+Live acceptance: NOT RUN.
+Documentation reference: plan sections 2-9; runbook sections 1-9; canonical worksheet.
+
+R31
+Scope and source confidence: O,L | T/G
+Actual coverage: observation-only; manual setting.
+Code reference: userspace-firstlogin; gates.
+Observed implementation: No feedback-sound write. Selected stored observation only. Alert sound, playback, approved alert volume and effective feedback remain manual.
+Policy/manual gate: Canonical R31 source and P01-P11/D01-D34 worksheet crosswalk.
+Acceptance test: Verify interface feedback sounds, approved alert sound, playback, and chosen 50 or 60 percent alert volume separately from output volume.
+Live acceptance: NOT RUN.
+Documentation reference: plan sections 2-9; runbook sections 1-9; canonical worksheet.
+
+R32
+Scope and source confidence: L,C; O only after validated support | T/G
+Actual coverage: manual only.
+Code reference: gates.
+Observed implementation: Focus and Screen Time sharing pending instruction only.
+Policy/manual gate: Canonical R32 source and P01-P11/D01-D34 worksheet crosswalk.
+Acceptance test: Verify Share Across Devices is off in both Focus and Screen Time. Do not sign in just to expose a control.
+Live acceptance: NOT RUN.
+Documentation reference: plan sections 2-9; runbook sections 1-9; canonical worksheet.
+
+R33
+Scope and source confidence: L,C; S for required authorization | H/G
+Actual coverage: manual only.
+Code reference: gates.
+Observed implementation: Location policy pending instruction only. No TCC or Location setter.
+Policy/manual gate: Canonical R33 source and P01-P11/D01-D34 worksheet crosswalk.
+Acceptance test: Verify global enabled state, Find My, Reminders, and Weather permission, and HomeKit off in System Services. Approve exact other-app choices first. Location permission does not authorize iCloud sync.
+Live acceptance: NOT RUN.
+Documentation reference: plan sections 2-9; runbook sections 1-9; canonical worksheet.
+
+R34
+Scope and source confidence: L,C; M for eligible PPPC settings | H/G
+Actual coverage: guided/manual.
+Code reference: apps; gates.
+Observed implementation: app-privacy-consent pending records exist for Accessibility and Screen Recording. No TCC writes, PPPC deployment, app restart, or actual screen-share test.
+Policy/manual gate: Canonical R34 source and P01-P11/D01-D34 worksheet crosswalk.
+Acceptance test: Verify actual bundle and signing identity, Accessibility and Screen Recording consent, and real synthetic screen share. MDM cannot silently grant all Screen Recording access. Do not add camera or microphone grants implicitly.
+Live acceptance: NOT RUN.
+Documentation reference: plan sections 2-9; runbook sections 1-9; canonical worksheet.
+
+R35
+Scope and source confidence: L,C; M for applicable organization controls | H/G
+Actual coverage: manual/policy blocked.
+Code reference: gates.
+Observed implementation: Always emits Find My owner BLOCKED_POLICY. No Apple Account, Find My, or Activation Lock integration.
+Policy/manual gate: Canonical R35 source and P01-P11/D01-D34 worksheet crosswalk.
+Acceptance test: Verify only the designated authorized account, one local Find My owner, enabled Find My Mac, recovery, transfer, and offboarding decisions. A Location checkbox is insufficient.
+Live acceptance: NOT RUN.
+Documentation reference: plan sections 2-9; runbook sections 1-9; canonical worksheet.
+
+R36
+Scope and source confidence: L,C | H/T/G
+Actual coverage: manual/policy blocked.
+Code reference: gates.
+Observed implementation: Always emits iCloud inventory BLOCKED_POLICY. No sync changes or deletion actions.
+Policy/manual gate: Canonical R36 source and P01-P11/D01-D34 worksheet crosswalk.
+Acceptance test: After authorized sign-in, verify only Find My sync and exact other-app controls. Review Internet Accounts again. Resolve dependencies without automatic deletion, sign-out, or local-data removal.
+Live acceptance: NOT RUN.
+Documentation reference: plan sections 2-9; runbook sections 1-9; canonical worksheet.
+
+R37
+Scope and source confidence: O,L,C where required | T/G
+Actual coverage: manual only.
+Code reference: gates.
+Observed implementation: Wallet orders pending instruction only.
+Policy/manual gate: Canonical R37 source and P01-P11/D01-D34 worksheet crosswalk.
+Acceptance test: Verify Add Orders to Wallet is off without changing cards or unrelated Wallet data.
+Live acceptance: NOT RUN.
+Documentation reference: plan sections 2-9; runbook sections 1-9; canonical worksheet.
+
+R38
+Scope and source confidence: O,L; hardware gate | T/G
+Actual coverage: manual only.
+Code reference: gates.
+Observed implementation: Backlight pending instruction only. No hardware test or setter.
+Policy/manual gate: Canonical R38 source and P01-P11/D01-D34 worksheet crosswalk.
+Acceptance test: Verify 50 percent and 30-second inactivity shutoff on equipped hardware. Record unsupported or external keyboard as not applicable with evidence.
+Live acceptance: NOT RUN.
+Documentation reference: plan sections 2-9; runbook sections 1-9; canonical worksheet.
+
+R39
+Scope and source confidence: O,L; hardware gate | T
+Actual coverage: observation-only; manual settings/gestures.
+Code reference: userspace-firstlogin; userspace-audit; gates.
+Observed implementation: There is no built-in full trackpad policy list. The two trackpad domains allow only Clicking, TrackpadRightClick, TrackpadThreeFingerDrag, and Dragging in the library table. Operator-listed entries for those keys can be written through module 2. Firstlogin still observes three keys; audit observes tap only. Haptics and Look Up/data detector settings and physical gesture tests remain manual/unimplemented.
+Policy/manual gate: Canonical R39 source and P01-P11/D01-D34 worksheet crosswalk.
+Acceptance test: Verify Force Click and haptic feedback off, Look Up and data detectors off, tap to click on, and two-finger secondary click. Test actual gestures and UI.
+Live acceptance: NOT RUN.
+Documentation reference: plan sections 2-9; runbook sections 1-9; canonical worksheet.
+
+R40
+Scope and source confidence: L,C; S for system-wide extensions | H/T/G
+Actual coverage: manual/policy blocked.
+Code reference: gates.
+Observed implementation: Always emits Login Items policy BLOCKED_POLICY. No registered-item inventory or approval/disablement implementation.
+Policy/manual gate: Canonical R40 source and P01-P11/D01-D34 worksheet crosswalk.
+Acceptance test: After installation and first launch, inventory vendor identity and privileges. Approve each decision separately. Verify effective approved states without blanket approval or disabling required agents.
+Live acceptance: NOT RUN.
+Documentation reference: plan sections 2-9; runbook sections 1-9; canonical worksheet.
+
+R41
+Scope and source confidence: No change | G
+Actual coverage: no-change guard.
+Code reference: gates.
+Observed implementation: Emits ALREADY_CORRECT for no inferred blank-section operation. This is no-change intent, not proof of other requirements.
+Policy/manual gate: Canonical R41 source and P01-P11/D01-D34 worksheet crosswalk.
+Acceptance test: Verify no inferred operations for blank Energy, Lock Screen, Game Centre, iCloud, or unfinished Apple Account headings. Existing explicit requirements still apply.
+Live acceptance: NOT RUN.
+Documentation reference: plan sections 2-9; runbook sections 1-9; canonical worksheet.
+
+R42
+Scope and source confidence: S,C; M only where the exact capability is supported | H/T/G
+Actual coverage: partial record/service apply; manual privacy and remote tests.
+Code reference: ssh; userspace-audit.
+Observed implementation: Privileged evaluator checks direct names, nested groups, GUID members and read errors. Exact records stay PENDING_CONSENT, not effective access proof. Edits/readback exist; SSH enablement requires exact group. Audit explicitly does not evaluate GroupMembers GUIDs. FDA and positive/valid-excluded negative tests remain manual.
+Policy/manual gate: Canonical R42 source and P01-P11/D01-D34 worksheet crosswalk.
+Acceptance test: Verify SSH state, named workstationadmin-only allowlist, and remote-user full-disk-access control separately. Test authenticated session identity and a synthetic privacy-protected fixture with valid ordinary permissions. Record no content. Test valid-credential rejection for an excluded account including another admin where available. Repeat after resume or reboot. Keep fixture check pending if unavailable. Do not change other users rights or bypass TCC.
+Live acceptance: NOT RUN.
+Documentation reference: plan sections 2-9; runbook sections 1-9; canonical worksheet.
+
+
+D15 static disposition and scope boundary
+Session baseline allowlist, helper-variable isolation, fixture policies/expectations,
+return-code checks, positive-offset link IDs, and HostName status have static repairs.
+The D4 reviewer records independent 144/144 D4 mock assertions, not D15 or native acceptance.
+Locked to d18 draft5. PARTIAL, not Mac-validated. No test was executed for these documents.
+One launcher mutation path remains disabled: admin-session. That path is out of scope by design and is not unfinished work.
+The updates writer, the two module-2 entry points, the firstlogin installer, the shared-copy writer, the apps install writer, and the FileVault key writer are restored as described in the plan.
+No requirement is claimed live accepted. All 42 acceptance tests still need authorized evidence.
+Path trust checks reject ACLs but do not pin objects through consumption.
+Manual evidence ingestion is deferred. Operator records cannot turn code pending into PASS.
+The former UserSpace-firstlogin inspect script is removed from this archive. The installed agent refuses an unlisted user (exit 4). That refusal is not compliance.
+
+D17 pilot acceptance boundary
+All 42 entries describe coverage, not 42 fulfilled requirements. One launcher mutation path
+remains disabled (admin-session). That path is out of scope by design and is not unfinished work. First-login install, the shared-copy writer, the apps install writer, and the FileVault key writer are restored in this draft, not Mac-validated. FileVault external import and the restart unlock test remain manual.
+D5-01 has D7 octal capture framing carried into D15, with strict version/build/arch/GUID readers.
+Invalid metadata reports unknown. The older D5 marker-stripping bypass is not the current design.
+DV01 inherited salt clearing is present. DV02-DV08 documentation corrections match actual bounds.
+Parent 0700/session 0644 are recommended modes, not exact checks. Paths are not pinned.
+Reviewer's accepted narrow trusted-actor pilot limitations are not new documentation code blockers.
+Locked to d18 draft5. PARTIAL, not Mac-validated. No broad retry safety is promised.
+Locked to d18 draft5. PARTIAL, not Mac-validated. The earlier D17, D16, D15, and D14 documentation lock history is kept. The D12, D13, and D14 staging drafts, and the preserved d15-draft3 and d15-draft5 staging drafts, were not modified.
+
+D15 static delta
+Gate/preflight, audit/app architecture, SSH/accounts GUID and report metadata use strict scalar readers.
+Header/module-start os/build/arch emit unknown for malformed facts. No automatic apply or evidence ingestion added.
+The author result of pass=510 fail=0 on this draft5 tar, with stall_total 1150 seconds, remains attributed author evidence. The harness record states that a run with stall_total greater than 5 seconds is not a clean pass. These documents are locked to d18 draft5. Status: PARTIAL, not Mac-validated.
+Scanner accidental-leak scope, traversal/read errors, declared-link content and trusted-actor races remain limited.
+
+D15 central-capture delta
+Capture now checks byte integrity, transforms, independent count, size, decode length and NUL before decoding.
+Admin/token/console/plist helper reads join capture. Conflicting token states cannot certify enablement.
+The reported 92 scalar cases, 11 transform injections and NUL sweep were inspected, not run here.
+Capture is not every direct-read path or a production command timeout. One launcher writer remains disabled. That admin-session path is out of scope by design. The updates writer, both module-2 paths, the firstlogin installer, the apps install writer, the shared-copy writer, and the FileVault key writer are restored as described in the plan. APP_LIST, UNKNOWN account existence, static-check, and scrub-check remain. Static rule R remains internal tooling only.
+Author reports pass=510 fail=0 on this draft5 tar, with stall_total 1150 seconds, not independent QA. The harness record states that a run with stall_total greater than 5 seconds is not a clean pass. Policy, manual, and live acceptance remain unchanged: not Mac-validated.
+Locked to d18 draft5. PARTIAL, not Mac-validated.

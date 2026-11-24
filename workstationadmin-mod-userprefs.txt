@@ -1,0 +1,165 @@
+#!/bin/bash
+# workstationadmin-mod-userprefs.txt - user preferences, offline path R21 (target user not logged in)
+# Account: workstationadmin via launcher.
+# Root: required (sudo) for apply.
+# Bash 3.2, stock macOS tools only.
+# Dry run (inspect) is the default; changes happen only with --mode apply.
+# No secret is ever accepted as an argument, written to a log or reported.
+# Requirements: R21 (user preferences, offline path). Root: required (through the launcher's sudo).
+# D12 (module 2, offline path): writes the operator's preference list (user-prefs.conf, same file and grammar as
+# UserSpace-preferences.txt) into the home of a target user who is NOT logged in and has not started a session. Preferred
+# route for a logged-in user is UserSpace-preferences.txt in THAT user's own session; this module REFUSES every user who
+# is the console user or appears in "who". Targets: the users in session policy USERS (never workstationadmin).
+# d13: the login state is read FRESH per target user (who, console user and a process list "ps -axo uid=" that must show a
+# UID-0 process and no process of the target UID); the account must have UniqueID >= 500; every entry must be in the
+# library's (domain,key) table and have no file under Managed Preferences; the written value is verified on disk with
+# plutil (as the target user), independent of the preference daemon.
+# d14 (reviewer S6): right before the FIRST write for a user (after the backup and the identity re-check) the login state is read once more.
+# Per user, before anything is read or written: the account record exists, the home is exactly /Users/<user> (from the
+# directory record), and the home, its Library and Library/Preferences are real directories (no symlink), owned by that
+# user, not group/other writable, without ACL. A plist that already exists must be a regular file owned by that user.
+# The write itself is done AS THE TARGET USER ("sudo -u USER defaults write PATH-DOMAIN"), never as root, so every
+# file is created with the user's own ownership; the backup is taken first (root-owned backup area), the owner and mode
+# of the written file are checked afterwards. Dry run (inspect) is the default. The apply gate is the common root gate
+# (workstationadmin through sudo, allowed build, SIP, MDM state readable) plus USER_PREFS_CONSENT=yes in the session policy.
+# ---- trusted bootstrap (CR01) ------------------------------------------
+# Runs before anything else: fixed PATH, readonly EUID check, then trust checks
+# on the suite directory, every ancestor and the library, using only absolute
+# tool paths. The fixture hook is honoured only off macOS, as non-root, under a
+# canonical /tmp path; otherwise it is refused, never silently relaxed.
+set +x +a   # no tracing; no allexport (D3-03)
+# d14 (reviewer S1): every function that exists at this point was imported from the caller's environment (exported BASH_FUNC_*) or
+# defined by a BASH_ENV startup file; none is trusted, so all are discarded before the first tool name is resolved. BASH_ENV
+# itself has already been read by this shell (it cannot be cleared in time); unsetting it only protects the child shells.
+for _wsp_f in $(compgen -A function); do unset -f "$_wsp_f"; done
+unset BASH_ENV ENV
+PATH=/usr/bin:/bin:/usr/sbin:/sbin; export PATH
+case "${EUID:-x}" in ''|*[!0-9]*) echo "REFUSED: EUID unreadable" >&2; exit 4;; esac
+_wsp_os=$(/usr/bin/uname -s 2>/dev/null || /bin/uname -s)
+_wsp_fx=0
+if [ -n "${WSP_FIXTURE_ROOT:-}" ]; then
+  if [ "$_wsp_os" = Darwin ] || [ -d /System/Library/CoreServices ] || [ "$EUID" -eq 0 ]; then echo "REFUSED: fixture hook not allowed here" >&2; exit 4; fi
+  _wsp_c=$(cd "$WSP_FIXTURE_ROOT" 2>/dev/null && pwd -P) || { echo "REFUSED: fixture root" >&2; exit 4; }
+  case "$_wsp_c" in /tmp/?*) ;; *) echo "REFUSED: fixture root must canonically be under /tmp" >&2; exit 4;; esac
+  [ "$_wsp_c" = "${WSP_FIXTURE_ROOT%/}" ] || { echo "REFUSED: fixture root has a symlink" >&2; exit 4; }
+  _wsp_fx=1
+fi
+# Inherited suite-internal variables are discarded, including their export
+# attribute (documentation D4-1): unset removes both. Only the validated fixture hook stays.
+for _wsp_v in $(compgen -v WSP_); do case "$_wsp_v" in WSP_FIXTURE_ROOT) ;; *) unset "$_wsp_v";; esac; done
+[ "$_wsp_fx" -eq 1 ] || unset WSP_FIXTURE_ROOT
+_wsp_st() { if [ "$_wsp_os" = Darwin ]; then /usr/bin/stat -f "$1" "$2"; else /usr/bin/stat -c "$3" "$2"; fi; }
+_wsp_noacl() { # deny by default (D3-01): "+" refuses; "@" needs a one-line "ls -lde"
+  _wsp_l=$(/bin/ls -ld "$1" 2>/dev/null) || return 1
+  _wsp_l=${_wsp_l%% *}
+  case "$_wsp_l" in
+    ??????????|??????????.) return 0;;
+    ??????????@) _wsp_n=$(/bin/ls -lde "$1" 2>/dev/null) || return 1
+                 [ "$(printf '%s\n' "$_wsp_n" | /usr/bin/wc -l | /usr/bin/tr -d ' ')" = 1 ];;
+    *) return 1;;
+  esac
+}
+_wsp_trust() { # path: not symlink, no ACL, owner root|workstationadmin (fixture: caller), not group/world writable
+  [ -L "$1" ] && return 1
+  _wsp_noacl "$1" || return 1
+  _wsp_o=$(_wsp_st %Su "$1" %U) || return 1; _wsp_m=$(_wsp_st %Lp "$1" %a) || return 1
+  case "$_wsp_o" in root|workstationadmin) ;; *) [ "$_wsp_fx" -eq 1 ] && [ "$_wsp_o" = "$(/usr/bin/id -un)" ] || return 1;; esac
+  case "$_wsp_m" in *[2367]?|*[2367]) case "$_wsp_m" in 1???) [ -d "$1" ] && [ "$1" != "$_wsp_dir" ] || return 1;; *) return 1;; esac;; esac
+  return 0
+}
+case "$0" in /*) _wsp_self="$0";; *) _wsp_self="$(pwd -P)/$0";; esac
+_wsp_dir=$(cd "${_wsp_self%/*}" 2>/dev/null && pwd -P) || { echo "REFUSED: suite directory" >&2; exit 4; }
+_wsp_a="$_wsp_dir"
+while :; do _wsp_trust "$_wsp_a" || { echo "REFUSED: untrusted suite directory or ancestor" >&2; exit 4; }; [ "$_wsp_a" = / ] && break; _wsp_a=${_wsp_a%/*}; [ -n "$_wsp_a" ] || _wsp_a=/; done
+_wsp_lib="$_wsp_dir/workstationadmin-lib.txt"
+if ! { [ -f "$_wsp_lib" ] && _wsp_trust "$_wsp_lib"; }; then echo "REFUSED: library missing or untrusted" >&2; exit 4; fi
+_wsp_trust "$_wsp_dir/${_wsp_self##*/}" || { echo "REFUSED: entry script untrusted" >&2; exit 4; }
+# Residual risk: a process running as root or workstationadmin can still replace
+# files between this check and use. Those identities are trusted by design.
+# shellcheck source=/dev/null
+. "$_wsp_lib"
+WSP_MODULE="userprefs"
+WSP_GATE_NEEDS=root
+wsp_parse_mode "$@"
+if [ "$WSP_MODE" = apply ]; then
+  cons=$(wsp_session_policy USER_PREFS_CONSENT) || cons=""
+  if [ "$cons" != yes ]; then
+    WSP_MODE=inspect
+    wsp_status BLOCKED_POLICY P01 apply-gate "apply refused, running inspect only: operator consent USER_PREFS_CONSENT=yes is not set in the session policy" pass blocked record
+  fi
+fi
+if ! wsp_prefs_load; then
+  wsp_status BLOCKED_POLICY R21 preferences-config "$WSP_PREF_WHY; nothing is changed" configured not-usable record
+  wsp_finish
+fi
+users=$(wsp_session_policy USERS) || users=""
+if [ -z "$users" ]; then wsp_status BLOCKED_POLICY R21 target-users "session policy USERS unset; nothing is changed" "" "" record; wsp_finish; fi
+wsp_prefs_profile_load
+fl_users() { # one target user: all refusals first, then the shared per-entry pipeline
+  local u=$1 rid st h hl hv hp d o m ent _ifs uid
+  rid=$(wsp_rid "$u"); wsp_add_redact "$u"
+  if ! wsp_valid_account "$u" || [ "$u" = "$WSP_OPERATOR" ]; then wsp_status BLOCKED_POLICY R21 "$rid" "target user name is not valid for this module; nothing is changed" "" "" record; return 0; fi
+  st=$(wsp_user_state "$u")
+  if [ "$st" != yes ]; then wsp_status UNKNOWN R21 "$rid-account" "target account not proven to exist; nothing is changed" "" "$st" record; return 0; fi
+  # d13 (reviewer S10): a regular account only (UniqueID >= 500; the exact /Users/<user> home record below also excludes system accounts)
+  uid=$(wsp_user_uid "$u") || uid=""
+  if [ -z "$uid" ]; then wsp_status UNKNOWN R21 "$rid-account" "target account UniqueID unreadable; nothing is changed" "" unknown record; return 0; fi
+  if [ "$uid" -lt 500 ]; then wsp_status BLOCKED_POLICY R21 "$rid-account" "target account is not a regular user account (UniqueID below 500); nothing is changed" "" system record; return 0; fi
+  wsp_run hl dscl . -read "/Users/$u" NFSHomeDirectory
+  hv=""; [ "$WSP_RC" -eq 0 ] && hv=$(wsp_field "$hl" NFSHomeDirectory:) || hv=""
+  if [ "$hv" != "/Users/$u" ]; then wsp_status UNKNOWN R21 "$rid-home" "home directory record unreadable or not the expected home folder of this user; nothing is changed" "" unknown record; return 0; fi
+  h="$WSP_ROOT$hv"
+  for d in "$h" "$h/Library" "$h/Library/Preferences"; do
+    if [ -L "$d" ] || [ ! -d "$d" ]; then wsp_status BLOCKED_POLICY R21 "$rid-home" "home, Library or Preferences is missing or a symlink; nothing is changed (the first login creates them)" "" "" record; return 0; fi
+    o=$(wsp_stat_owner "$d") || o=""
+    m=$(wsp_stat_mode "$d") || m=""
+    if [ "$o" != "$u" ]; then wsp_status BLOCKED_POLICY R21 "$rid-home" "home, Library or Preferences is not owned by the target user; nothing is changed" "" foreign record; return 0; fi
+    if ! wsp_mode_not_gw "$m" || ! wsp_no_acl "$d"; then wsp_status BLOCKED_POLICY R21 "$rid-home" "home, Library or Preferences is group/other writable or has an ACL; nothing is changed" "" unsafe record; return 0; fi
+  done
+  WSP_PE_PLISTDIR="$h/Library/Preferences"; WSP_PE_DOMDIR="$h/Library/Preferences"; WSP_PE_BKROOT=""
+  WSP_PE_LABEL="$rid-"; WSP_PE_HOME=""; WSP_PE_USER=""; WSP_UPREF_AS=""
+  # d13 (reviewer S3/S4): login state and processes are read HERE, fresh for this user (not once for the whole run)
+  wsp_login_state "$u" "$uid"
+  case "$WSP_LOGIN" in
+    idle) ;;
+    session) wsp_status BLOCKED_POLICY R21 "$rid-session" "user is logged in: the offline path is refused; run UserSpace-preferences.txt in that user's own session" "" loggedin record; return 0;;
+    process) wsp_status BLOCKED_POLICY R21 "$rid-session" "a process owned by the target user is running: the offline path is refused until the user has no process" "" process record; return 0;;
+    *) wsp_status UNKNOWN R21 "$rid-session" "login state or process list unreadable; nothing is changed" "" unknown record; return 0;;
+  esac
+  wsp_pe_pre_plists "$u" || return 0
+  WSP_PE_USER="$u"; WSP_UPREF_AS="$u"   # set only now: every refusal above returns with both empty (the write identity is never left behind)
+  WSP_PE_UID="$uid"; WSP_PE_FRESH=1     # d14 (S6): the first write of this user re-reads who, the console user and the process list
+  _ifs=$IFS; set -f; IFS=$WSP_NL
+  # shellcheck disable=SC2086 # intentional split of the validated entry list (globbing off)
+  set -- $WSP_PREF_ENTRIES
+  IFS=$_ifs; set +f
+  for ent in "$@"; do wsp_pref_entry "$ent"; done
+  WSP_UPREF_AS=""; WSP_PE_USER=""; WSP_PE_UID=""; WSP_PE_FRESH=0
+}
+# every existing plist of the list must be a regular, non-symlink file owned by the target user
+wsp_pe_pre_plists() { local u=$1 ent r dom pn pl o rid _ifs2
+  rid=$(wsp_rid "$u")
+  _ifs2=$IFS; set -f; IFS=$WSP_NL
+  # shellcheck disable=SC2086 # intentional split of the validated entry list (globbing off)
+  set -- $WSP_PREF_ENTRIES
+  IFS=$_ifs2; set +f
+  for ent in "$@"; do
+    r=${ent#*|}; dom=${r%%|*}
+    wsp_pref_domain_ok "$dom" || continue
+    pn=$(wsp_prefs_plist_name "$dom"); pl="$WSP_PE_PLISTDIR/$pn.plist"
+    if [ -L "$pl" ]; then wsp_status BLOCKED_POLICY R21 "$rid-plist" "a preference file is a symlink; nothing is changed for this user" "" symlink record; return 1; fi
+    if [ -e "$pl" ]; then
+      if [ ! -f "$pl" ]; then wsp_status BLOCKED_POLICY R21 "$rid-plist" "a preference file is not a regular file; nothing is changed for this user" "" notregular record; return 1; fi
+      o=$(wsp_stat_owner "$pl") || o=""
+      if [ "$o" != "$u" ]; then wsp_status BLOCKED_POLICY R21 "$rid-plist" "a preference file is not owned by the target user; nothing is changed for this user" "" foreign record; return 1; fi
+    fi
+  done
+  return 0
+}
+_ifs=$IFS; set -f; IFS=' '
+# shellcheck disable=SC2086 # intentional split of the policy user list (globbing off)
+set -- $users
+IFS=$_ifs; set +f
+for tu in "$@"; do fl_users "$tu"; done
+wsp_status PENDING_LOGIN R21 effective-settings-view "stored values only were read back; the user confirms the behaviour at the next login" "" "" manual
+wsp_finish

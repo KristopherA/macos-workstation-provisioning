@@ -1,0 +1,128 @@
+#!/bin/bash
+# workstationadmin-mod-names.txt - asset tag and computer names R05
+# Account: workstationadmin via launcher.
+# Root: required (sudo) for apply.
+# Bash 3.2, stock macOS tools only.
+# Dry run (inspect) is the default; changes happen only with --mode apply.
+# No secret is ever accepted as an argument, written to a log or reported.
+# Requirements: R05 (P02, D06, D07). Names come only from policy templates plus
+# the prompted asset tag; no default tag. HostName is never changed.
+# ---- trusted bootstrap (CR01) ------------------------------------------
+# Runs before anything else: fixed PATH, readonly EUID check, then trust checks
+# on the suite directory, every ancestor and the library, using only absolute
+# tool paths. The fixture hook is honoured only off macOS, as non-root, under a
+# canonical /tmp path; otherwise it is refused, never silently relaxed.
+set +x +a   # no tracing; no allexport (D3-03)
+# d14 (reviewer S1): every function that exists at this point was imported from the caller's environment (exported BASH_FUNC_*) or
+# defined by a BASH_ENV startup file; none is trusted, so all are discarded before the first tool name is resolved. BASH_ENV
+# itself has already been read by this shell (it cannot be cleared in time); unsetting it only protects the child shells.
+for _wsp_f in $(compgen -A function); do unset -f "$_wsp_f"; done
+unset BASH_ENV ENV
+PATH=/usr/bin:/bin:/usr/sbin:/sbin; export PATH
+case "${EUID:-x}" in ''|*[!0-9]*) echo "REFUSED: EUID unreadable" >&2; exit 4;; esac
+_wsp_os=$(/usr/bin/uname -s 2>/dev/null || /bin/uname -s)
+_wsp_fx=0
+if [ -n "${WSP_FIXTURE_ROOT:-}" ]; then
+  if [ "$_wsp_os" = Darwin ] || [ -d /System/Library/CoreServices ] || [ "$EUID" -eq 0 ]; then echo "REFUSED: fixture hook not allowed here" >&2; exit 4; fi
+  _wsp_c=$(cd "$WSP_FIXTURE_ROOT" 2>/dev/null && pwd -P) || { echo "REFUSED: fixture root" >&2; exit 4; }
+  case "$_wsp_c" in /tmp/?*) ;; *) echo "REFUSED: fixture root must canonically be under /tmp" >&2; exit 4;; esac
+  [ "$_wsp_c" = "${WSP_FIXTURE_ROOT%/}" ] || { echo "REFUSED: fixture root has a symlink" >&2; exit 4; }
+  _wsp_fx=1
+fi
+# Inherited suite-internal variables are discarded, including their export
+# attribute (documentation D4-1): unset removes both. Only the validated fixture hook stays.
+for _wsp_v in $(compgen -v WSP_); do case "$_wsp_v" in WSP_FIXTURE_ROOT) ;; *) unset "$_wsp_v";; esac; done
+[ "$_wsp_fx" -eq 1 ] || unset WSP_FIXTURE_ROOT
+_wsp_st() { if [ "$_wsp_os" = Darwin ]; then /usr/bin/stat -f "$1" "$2"; else /usr/bin/stat -c "$3" "$2"; fi; }
+_wsp_noacl() { # deny by default (D3-01): "+" refuses; "@" needs a one-line "ls -lde"
+  _wsp_l=$(/bin/ls -ld "$1" 2>/dev/null) || return 1
+  _wsp_l=${_wsp_l%% *}
+  case "$_wsp_l" in
+    ??????????|??????????.) return 0;;
+    ??????????@) _wsp_n=$(/bin/ls -lde "$1" 2>/dev/null) || return 1
+                 [ "$(printf '%s\n' "$_wsp_n" | /usr/bin/wc -l | /usr/bin/tr -d ' ')" = 1 ];;
+    *) return 1;;
+  esac
+}
+_wsp_trust() { # path: not symlink, no ACL, owner root|workstationadmin (fixture: caller), not group/world writable
+  [ -L "$1" ] && return 1
+  _wsp_noacl "$1" || return 1
+  _wsp_o=$(_wsp_st %Su "$1" %U) || return 1; _wsp_m=$(_wsp_st %Lp "$1" %a) || return 1
+  case "$_wsp_o" in root|workstationadmin) ;; *) [ "$_wsp_fx" -eq 1 ] && [ "$_wsp_o" = "$(/usr/bin/id -un)" ] || return 1;; esac
+  case "$_wsp_m" in *[2367]?|*[2367]) case "$_wsp_m" in 1???) [ -d "$1" ] && [ "$1" != "$_wsp_dir" ] || return 1;; *) return 1;; esac;; esac
+  return 0
+}
+case "$0" in /*) _wsp_self="$0";; *) _wsp_self="$(pwd -P)/$0";; esac
+_wsp_dir=$(cd "${_wsp_self%/*}" 2>/dev/null && pwd -P) || { echo "REFUSED: suite directory" >&2; exit 4; }
+_wsp_a="$_wsp_dir"
+while :; do _wsp_trust "$_wsp_a" || { echo "REFUSED: untrusted suite directory or ancestor" >&2; exit 4; }; [ "$_wsp_a" = / ] && break; _wsp_a=${_wsp_a%/*}; [ -n "$_wsp_a" ] || _wsp_a=/; done
+_wsp_lib="$_wsp_dir/workstationadmin-lib.txt"
+if ! { [ -f "$_wsp_lib" ] && _wsp_trust "$_wsp_lib"; }; then echo "REFUSED: library missing or untrusted" >&2; exit 4; fi
+_wsp_trust "$_wsp_dir/${_wsp_self##*/}" || { echo "REFUSED: entry script untrusted" >&2; exit 4; }
+# Residual risk: a process running as root or workstationadmin can still replace
+# files between this check and use. Those identities are trusted by design.
+# shellcheck source=/dev/null
+. "$_wsp_lib"
+WSP_MODULE="names"
+WSP_GATE_NEEDS=root
+wsp_parse_mode "$@"
+# --- asset tag (owner policy): prompted at actual setup, before naming ---
+AT_FILE="$WSP_BASE/asset-tag"
+asset=$(wsp_read_asset_tag) || asset=""
+if [ -z "$asset" ] && { [ -e "$AT_FILE" ] || [ -L "$AT_FILE" ]; }; then
+  wsp_status FAILED R05 asset-tag "asset-tag record exists but is unsafe or invalid (owner, mode 600, symlink or grammar); not overwritten" set invalid record
+  AT_BAD=1
+else AT_BAD=0; fi
+if [ -z "$asset" ] && [ "$AT_BAD" -eq 0 ] && [ "$WSP_MODE" = "apply" ]; then
+  [ "$EUID" -eq 0 ] || [ "$WSP_FIXTURE" -eq 1 ] || wsp_refuse "needs root"
+  printf 'Asset tag (letters, digits, hyphen; max 24): ' > /dev/tty; IFS= read -r a < /dev/tty || a=""
+  if wsp_valid_asset_tag "$a" && wsp_confirm "Use asset tag shown above?" "YES"; then
+    [ -L "$AT_FILE" ] && wsp_refuse "asset-tag file is a symlink"
+    mkdir -p "$WSP_BASE" && chmod 700 "$WSP_BASE"
+    if (set -C; umask 077; printf '%s\n' "$a" > "$AT_FILE") 2>/dev/null && chmod 600 "$AT_FILE" && [ "$(wsp_read_asset_tag)" = "$a" ]; then asset="$a"
+    else wsp_status FAILED R05 asset-tag "could not create asset-tag record exclusively" set failed none; fi
+  else wsp_status FAILED R05 asset-tag "asset tag rejected (invalid characters or length)" valid invalid none; fi
+fi
+[ -n "$asset" ] && wsp_add_redact "$asset"
+if [ -n "$asset" ]; then wsp_status ALREADY_CORRECT R05 asset-tag "asset tag recorded (value redacted)" set set record
+else wsp_status PENDING_CONSENT R05 asset-tag "asset tag is prompted in apply mode" set unset none; fi
+# Proposed names come only from policy templates containing {ASSET}; other
+# tokens are never invented. Setters use ONLY the proposals, and only after the
+# operator sees the exact values on the terminal and types NAMES. Values are
+# never written to the report (they contain the redacted asset tag).
+propose() { # template-key -> prints proposal or nothing
+  t=$(wsp_policy "$1") || return 1
+  case "$t" in *"{ASSET}"*) ;; *) return 1;; esac
+  [ -n "$asset" ] || return 1
+  printf '%s' "${t%%\{ASSET\}*}$asset${t#*\{ASSET\}}"
+}
+cn=$(propose COMPUTER_NAME_TEMPLATE) || cn=""
+lh=$(propose LOCAL_HOST_NAME_TEMPLATE) || lh=""
+case "$lh" in *[!A-Za-z0-9-]*|-*|*-) lh=""; wsp_status BLOCKED_POLICY R05 proposal-LocalHostName "template result not network safe" network-safe invalid none;; esac
+[ ${#lh} -le 63 ] || lh=""
+names_state() { # label want
+  wsp_run have scutil --get "$1"
+  if [ "$WSP_RC" -ne 0 ]; then echo unknown; elif [ "$have" = "$2" ]; then echo same; else echo differs; fi
+}
+if [ -z "$cn" ] || [ -z "$lh" ]; then
+  wsp_status BLOCKED_POLICY R05 names "templates (D06) or asset tag missing; no name is changed" template unset none
+else
+  s1=$(names_state ComputerName "$cn"); s2=$(names_state LocalHostName "$lh")
+  if [ "$s1" = same ] && [ "$s2" = same ]; then wsp_status ALREADY_CORRECT R05 names "ComputerName and LocalHostName match proposals" match match record
+  elif [ "$s1" = unknown ] || [ "$s2" = unknown ]; then wsp_status UNKNOWN R05 names "current names not readable" match unknown record
+  elif [ "$WSP_MODE" != "apply" ]; then wsp_status PROPOSED R05 names "names differ from proposals; apply shows them and asks for NAMES" match differs record
+  else
+    [ "$EUID" -eq 0 ] || [ "$WSP_FIXTURE" -eq 1 ] || wsp_refuse "needs root"
+    printf 'Proposed ComputerName: %s\nProposed LocalHostName: %s\n' "$cn" "$lh" > /dev/tty
+    if wsp_confirm "Set exactly these names?" "NAMES"; then
+      wsp_run x scutil --set ComputerName "$cn"; r1=$WSP_RC
+      wsp_run x scutil --set LocalHostName "$lh"; r2=$WSP_RC
+      if [ "$r1" -eq 0 ] && [ "$r2" -eq 0 ] && [ "$(names_state ComputerName "$cn")" = same ] && [ "$(names_state LocalHostName "$lh")" = same ]; then
+        wsp_status CHANGED_VERIFIED R05 names "set and read back" match match record 0
+      else wsp_status FAILED R05 names "set or readback failed" match differs record "$r1$r2"; fi
+    else wsp_status PENDING_CONSENT R05 names "operator did not confirm; nothing changed" match differs none; fi
+  fi
+fi
+wsp_status UNSUPPORTED R05 HostName "HostName is never changed by this suite by design (D07 open); manual if required" unchanged unchanged none
+wsp_status PENDING_CONSENT R05 network-unique "operator checks Bonjour/network uniqueness manually" "" "" manual
+wsp_finish

@@ -1,0 +1,122 @@
+#!/bin/bash
+# workstationadmin-mod-ard.txt - ARD Remote Management allowlist R15
+# Account: workstationadmin via launcher.
+# Root: required (sudo).
+# Bash 3.2, stock macOS tools only.
+# Dry run (inspect) is the default; changes happen only with --mode apply.
+# No secret is ever accepted as an argument, written to a log or reported.
+# Requirements: R15 (P07, D17). ARD Remote Management, not SSH or Screen Sharing.
+# Root: required (sudo). Kickstart sets the named-user allowlist and privileges.
+# Enabling the service on macOS 12.1+ needs Settings or MDM (Apple S2): consent gate.
+# Evidence limit: naprivs and ARD_AllLocalUsers are stored records (T confidence),
+# not proof of effective remote access. The all-privileges value -1073741569 is
+# a community-documented encoding, not validated on the target build.
+# ---- trusted bootstrap (CR01) ------------------------------------------
+# Runs before anything else: fixed PATH, readonly EUID check, then trust checks
+# on the suite directory, every ancestor and the library, using only absolute
+# tool paths. The fixture hook is honoured only off macOS, as non-root, under a
+# canonical /tmp path; otherwise it is refused, never silently relaxed.
+set +x +a   # no tracing; no allexport (D3-03)
+# d14 (reviewer S1): every function that exists at this point was imported from the caller's environment (exported BASH_FUNC_*) or
+# defined by a BASH_ENV startup file; none is trusted, so all are discarded before the first tool name is resolved. BASH_ENV
+# itself has already been read by this shell (it cannot be cleared in time); unsetting it only protects the child shells.
+for _wsp_f in $(compgen -A function); do unset -f "$_wsp_f"; done
+unset BASH_ENV ENV
+PATH=/usr/bin:/bin:/usr/sbin:/sbin; export PATH
+case "${EUID:-x}" in ''|*[!0-9]*) echo "REFUSED: EUID unreadable" >&2; exit 4;; esac
+_wsp_os=$(/usr/bin/uname -s 2>/dev/null || /bin/uname -s)
+_wsp_fx=0
+if [ -n "${WSP_FIXTURE_ROOT:-}" ]; then
+  if [ "$_wsp_os" = Darwin ] || [ -d /System/Library/CoreServices ] || [ "$EUID" -eq 0 ]; then echo "REFUSED: fixture hook not allowed here" >&2; exit 4; fi
+  _wsp_c=$(cd "$WSP_FIXTURE_ROOT" 2>/dev/null && pwd -P) || { echo "REFUSED: fixture root" >&2; exit 4; }
+  case "$_wsp_c" in /tmp/?*) ;; *) echo "REFUSED: fixture root must canonically be under /tmp" >&2; exit 4;; esac
+  [ "$_wsp_c" = "${WSP_FIXTURE_ROOT%/}" ] || { echo "REFUSED: fixture root has a symlink" >&2; exit 4; }
+  _wsp_fx=1
+fi
+# Inherited suite-internal variables are discarded, including their export
+# attribute (documentation D4-1): unset removes both. Only the validated fixture hook stays.
+for _wsp_v in $(compgen -v WSP_); do case "$_wsp_v" in WSP_FIXTURE_ROOT) ;; *) unset "$_wsp_v";; esac; done
+[ "$_wsp_fx" -eq 1 ] || unset WSP_FIXTURE_ROOT
+_wsp_st() { if [ "$_wsp_os" = Darwin ]; then /usr/bin/stat -f "$1" "$2"; else /usr/bin/stat -c "$3" "$2"; fi; }
+_wsp_noacl() { # deny by default (D3-01): "+" refuses; "@" needs a one-line "ls -lde"
+  _wsp_l=$(/bin/ls -ld "$1" 2>/dev/null) || return 1
+  _wsp_l=${_wsp_l%% *}
+  case "$_wsp_l" in
+    ??????????|??????????.) return 0;;
+    ??????????@) _wsp_n=$(/bin/ls -lde "$1" 2>/dev/null) || return 1
+                 [ "$(printf '%s\n' "$_wsp_n" | /usr/bin/wc -l | /usr/bin/tr -d ' ')" = 1 ];;
+    *) return 1;;
+  esac
+}
+_wsp_trust() { # path: not symlink, no ACL, owner root|workstationadmin (fixture: caller), not group/world writable
+  [ -L "$1" ] && return 1
+  _wsp_noacl "$1" || return 1
+  _wsp_o=$(_wsp_st %Su "$1" %U) || return 1; _wsp_m=$(_wsp_st %Lp "$1" %a) || return 1
+  case "$_wsp_o" in root|workstationadmin) ;; *) [ "$_wsp_fx" -eq 1 ] && [ "$_wsp_o" = "$(/usr/bin/id -un)" ] || return 1;; esac
+  case "$_wsp_m" in *[2367]?|*[2367]) case "$_wsp_m" in 1???) [ -d "$1" ] && [ "$1" != "$_wsp_dir" ] || return 1;; *) return 1;; esac;; esac
+  return 0
+}
+case "$0" in /*) _wsp_self="$0";; *) _wsp_self="$(pwd -P)/$0";; esac
+_wsp_dir=$(cd "${_wsp_self%/*}" 2>/dev/null && pwd -P) || { echo "REFUSED: suite directory" >&2; exit 4; }
+_wsp_a="$_wsp_dir"
+while :; do _wsp_trust "$_wsp_a" || { echo "REFUSED: untrusted suite directory or ancestor" >&2; exit 4; }; [ "$_wsp_a" = / ] && break; _wsp_a=${_wsp_a%/*}; [ -n "$_wsp_a" ] || _wsp_a=/; done
+_wsp_lib="$_wsp_dir/workstationadmin-lib.txt"
+if ! { [ -f "$_wsp_lib" ] && _wsp_trust "$_wsp_lib"; }; then echo "REFUSED: library missing or untrusted" >&2; exit 4; fi
+_wsp_trust "$_wsp_dir/${_wsp_self##*/}" || { echo "REFUSED: entry script untrusted" >&2; exit 4; }
+# Residual risk: a process running as root or workstationadmin can still replace
+# files between this check and use. Those identities are trusted by design.
+# shellcheck source=/dev/null
+. "$_wsp_lib"
+WSP_MODULE="ard"
+WSP_GATE_NEEDS=root
+wsp_parse_mode "$@"
+KS="$WSP_ROOT"/System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart
+PL=/Library/Preferences/com.apple.RemoteManagement
+ALLPRIV=-1073741569
+ard_scan() { # sets ARD_OK (yes|no|unknown), ARD_OTHERS (count), ARD_OTHER_NAMES
+  ARD_OK=unknown; ARD_OTHERS=0; ARD_OTHER_NAMES=""
+  wsp_run all defaults read "$PL" ARD_AllLocalUsers
+  if [ "$WSP_RC" -ne 0 ]; then return; fi
+  case "$all" in 0|1) ;; *) return;; esac
+  wsp_run lst dscl . -list /Users naprivs
+  if [ "$WSP_RC" -ne 0 ]; then return; fi
+  opok=no
+  while read -r u p; do
+    [ -n "$u" ] || continue
+    case "$p" in -[0-9]*|[0-9]*) case "${p#-}" in *[!0-9]*) return;; esac;; *) return;; esac   # strict integer, else unknown
+    if [ "$p" = 0 ] && [ "$u" != "$WSP_OPERATOR" ]; then continue; fi   # 0 = no privileges
+    if [ "$u" = "$WSP_OPERATOR" ]; then [ "$p" = "$ALLPRIV" ] && opok=yes
+    else ARD_OTHERS=$((ARD_OTHERS+1)); ARD_OTHER_NAMES="$ARD_OTHER_NAMES $u"; fi
+  done <<WSPEOF
+$lst
+WSPEOF
+  if [ "$all" = 0 ] && [ "$opok" = yes ] && [ "$ARD_OTHERS" -eq 0 ]; then ARD_OK=yes; else ARD_OK=no; fi
+}
+ard_scan
+if [ "$ARD_OK" = unknown ]; then
+  wsp_status UNKNOWN R15 ard-allowlist "ARD records not readable" operator-only-all unknown record "$WSP_RC" "$WSP_ERRCLASS"
+elif [ "$ARD_OK" = yes ]; then
+  wsp_status PENDING_CONSENT R15 ard-allowlist "stored records: specified users, operator all privileges, no other user; effective access unproven" operator-only-all operator-only-all record
+elif [ "$WSP_MODE" != "apply" ]; then
+  wsp_status PROPOSED R15 ard-allowlist "would set specified users = operator with all privileges; other users with privileges: $ARD_OTHERS" operator-only-all differs record
+else
+  [ "$EUID" -eq 0 ] || [ "$WSP_FIXTURE" -eq 1 ] || wsp_refuse "needs root"
+  if [ "$ARD_OTHERS" -gt 0 ] && ! wsp_confirm "Remove ARD privileges from $ARD_OTHERS other user(s)?" "REMOVE"; then
+    wsp_status BLOCKED_POLICY R15 ard-allowlist "other users keep ARD privileges (not confirmed)" operator-only-all differs record
+  else
+    edits=0
+    for u in $ARD_OTHER_NAMES; do wsp_run x "$KS" -configure -access -off -users "$u"; [ "$WSP_RC" -eq 0 ] || edits=1; done
+    wsp_run x "$KS" -configure -allowAccessFor -specifiedUsers; [ "$WSP_RC" -eq 0 ] || edits=1
+    wsp_run x "$KS" -configure -access -on -users "$WSP_OPERATOR" -privs -all; [ "$WSP_RC" -eq 0 ] || edits=1
+    ard_scan   # full re-read of every user after mutation
+    if [ "$ARD_OK" = yes ] && [ $edits -ne 0 ]; then
+      wsp_status FAILED R15 ard-allowlist "records match but a kickstart edit reported failure" operator-only-all operator-only-all record
+    elif [ "$ARD_OK" = yes ]; then
+      wsp_status CHANGED_VERIFIED R15 ard-allowlist "stored records re-read for all users: operator only, all privileges (effective access unproven)" operator-only-all operator-only-all record
+    else wsp_status FAILED R15 ard-allowlist "re-read after change does not match; others remaining: $ARD_OTHERS" operator-only-all differs record; fi
+  fi
+fi
+wsp_status PENDING_CONSENT R15 ard-service-enable "enable Remote Management in System Settings, General, Sharing (or MDM); kickstart alone is not sufficient on modern macOS" on unknown manual
+wsp_status PENDING_CONSENT R15 ard-positive-test "authorized client controls Mac as operator: manual" "" "" manual
+wsp_status PENDING_CONSENT R15 ard-negative-test "excluded admin with valid credentials is rejected: manual" "" "" manual
+wsp_finish

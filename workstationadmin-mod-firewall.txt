@@ -1,0 +1,86 @@
+#!/bin/bash
+# workstationadmin-mod-firewall.txt - application firewall R14
+# Account: workstationadmin via launcher.
+# Root: required (sudo).
+# Bash 3.2, stock macOS tools only.
+# Dry run (inspect) is the default; changes happen only with --mode apply.
+# No secret is ever accepted as an argument, written to a log or reported.
+# Requirements: R14. Root needed for apply. Only the global state; no stealth,
+# block-all or rule changes.
+# ---- trusted bootstrap (CR01) ------------------------------------------
+# Runs before anything else: fixed PATH, readonly EUID check, then trust checks
+# on the suite directory, every ancestor and the library, using only absolute
+# tool paths. The fixture hook is honoured only off macOS, as non-root, under a
+# canonical /tmp path; otherwise it is refused, never silently relaxed.
+set +x +a   # no tracing; no allexport (D3-03)
+# d14 (reviewer S1): every function that exists at this point was imported from the caller's environment (exported BASH_FUNC_*) or
+# defined by a BASH_ENV startup file; none is trusted, so all are discarded before the first tool name is resolved. BASH_ENV
+# itself has already been read by this shell (it cannot be cleared in time); unsetting it only protects the child shells.
+for _wsp_f in $(compgen -A function); do unset -f "$_wsp_f"; done
+unset BASH_ENV ENV
+PATH=/usr/bin:/bin:/usr/sbin:/sbin; export PATH
+case "${EUID:-x}" in ''|*[!0-9]*) echo "REFUSED: EUID unreadable" >&2; exit 4;; esac
+_wsp_os=$(/usr/bin/uname -s 2>/dev/null || /bin/uname -s)
+_wsp_fx=0
+if [ -n "${WSP_FIXTURE_ROOT:-}" ]; then
+  if [ "$_wsp_os" = Darwin ] || [ -d /System/Library/CoreServices ] || [ "$EUID" -eq 0 ]; then echo "REFUSED: fixture hook not allowed here" >&2; exit 4; fi
+  _wsp_c=$(cd "$WSP_FIXTURE_ROOT" 2>/dev/null && pwd -P) || { echo "REFUSED: fixture root" >&2; exit 4; }
+  case "$_wsp_c" in /tmp/?*) ;; *) echo "REFUSED: fixture root must canonically be under /tmp" >&2; exit 4;; esac
+  [ "$_wsp_c" = "${WSP_FIXTURE_ROOT%/}" ] || { echo "REFUSED: fixture root has a symlink" >&2; exit 4; }
+  _wsp_fx=1
+fi
+# Inherited suite-internal variables are discarded, including their export
+# attribute (documentation D4-1): unset removes both. Only the validated fixture hook stays.
+for _wsp_v in $(compgen -v WSP_); do case "$_wsp_v" in WSP_FIXTURE_ROOT) ;; *) unset "$_wsp_v";; esac; done
+[ "$_wsp_fx" -eq 1 ] || unset WSP_FIXTURE_ROOT
+_wsp_st() { if [ "$_wsp_os" = Darwin ]; then /usr/bin/stat -f "$1" "$2"; else /usr/bin/stat -c "$3" "$2"; fi; }
+_wsp_noacl() { # deny by default (D3-01): "+" refuses; "@" needs a one-line "ls -lde"
+  _wsp_l=$(/bin/ls -ld "$1" 2>/dev/null) || return 1
+  _wsp_l=${_wsp_l%% *}
+  case "$_wsp_l" in
+    ??????????|??????????.) return 0;;
+    ??????????@) _wsp_n=$(/bin/ls -lde "$1" 2>/dev/null) || return 1
+                 [ "$(printf '%s\n' "$_wsp_n" | /usr/bin/wc -l | /usr/bin/tr -d ' ')" = 1 ];;
+    *) return 1;;
+  esac
+}
+_wsp_trust() { # path: not symlink, no ACL, owner root|workstationadmin (fixture: caller), not group/world writable
+  [ -L "$1" ] && return 1
+  _wsp_noacl "$1" || return 1
+  _wsp_o=$(_wsp_st %Su "$1" %U) || return 1; _wsp_m=$(_wsp_st %Lp "$1" %a) || return 1
+  case "$_wsp_o" in root|workstationadmin) ;; *) [ "$_wsp_fx" -eq 1 ] && [ "$_wsp_o" = "$(/usr/bin/id -un)" ] || return 1;; esac
+  case "$_wsp_m" in *[2367]?|*[2367]) case "$_wsp_m" in 1???) [ -d "$1" ] && [ "$1" != "$_wsp_dir" ] || return 1;; *) return 1;; esac;; esac
+  return 0
+}
+case "$0" in /*) _wsp_self="$0";; *) _wsp_self="$(pwd -P)/$0";; esac
+_wsp_dir=$(cd "${_wsp_self%/*}" 2>/dev/null && pwd -P) || { echo "REFUSED: suite directory" >&2; exit 4; }
+_wsp_a="$_wsp_dir"
+while :; do _wsp_trust "$_wsp_a" || { echo "REFUSED: untrusted suite directory or ancestor" >&2; exit 4; }; [ "$_wsp_a" = / ] && break; _wsp_a=${_wsp_a%/*}; [ -n "$_wsp_a" ] || _wsp_a=/; done
+_wsp_lib="$_wsp_dir/workstationadmin-lib.txt"
+if ! { [ -f "$_wsp_lib" ] && _wsp_trust "$_wsp_lib"; }; then echo "REFUSED: library missing or untrusted" >&2; exit 4; fi
+_wsp_trust "$_wsp_dir/${_wsp_self##*/}" || { echo "REFUSED: entry script untrusted" >&2; exit 4; }
+# Residual risk: a process running as root or workstationadmin can still replace
+# files between this check and use. Those identities are trusted by design.
+# shellcheck source=/dev/null
+. "$_wsp_lib"
+WSP_MODULE="firewall"
+WSP_GATE_NEEDS=root
+wsp_parse_mode "$@"
+FW="$WSP_ROOT"/usr/libexec/ApplicationFirewall/socketfilterfw
+wsp_run st "$FW" --getglobalstate
+if [ "$WSP_RC" -ne 0 ]; then wsp_status UNKNOWN R14 global "command failed" enabled unknown effective-cli "$WSP_RC" "$WSP_ERRCLASS"
+else case "$st" in
+  "Firewall is enabled. (State = 1)"|"Firewall is enabled. (State = 2)") wsp_status ALREADY_CORRECT R14 global "readback enabled" enabled enabled effective-cli 0;;
+  "Firewall is disabled. (State = 0)")
+     if [ "$WSP_MODE" = "apply" ]; then [ "$EUID" -eq 0 ] || [ "$WSP_FIXTURE" -eq 1 ] || wsp_refuse "needs root"
+       wsp_run x "$FW" --setglobalstate on; set_rc=$WSP_RC; set_ec=$WSP_ERRCLASS
+       wsp_run st "$FW" --getglobalstate; [ "$WSP_RC" -eq 0 ] || st=""
+       [ "$set_rc" -eq 0 ] || st="set-failed"
+       case "$st" in "Firewall is enabled. (State = 1)"|"Firewall is enabled. (State = 2)") wsp_status CHANGED_VERIFIED R14 global "enabled and read back" enabled enabled effective-cli "$WSP_RC";;
+         set-failed) wsp_status FAILED R14 global "enable command failed" enabled unconfirmed effective-cli "$set_rc" "$set_ec";;
+         *) wsp_status FAILED R14 global "state did not change (MDM may manage it)" enabled unconfirmed effective-cli "$WSP_RC" "$WSP_ERRCLASS";; esac
+     else wsp_status PROPOSED R14 global "would enable" enabled disabled effective-cli 0; fi;;
+  *) wsp_status UNKNOWN R14 global "output not in known grammar" enabled unparsed effective-cli 0 parse;;
+esac; fi
+wsp_status PENDING_LOGIN R14 after-reboot "re-run verify after reboot; inbound behavior acceptance is manual (D16)" "" "" manual
+wsp_finish

@@ -1,0 +1,590 @@
+Canonical nonsecret configuration worksheet
+Locked to d18 draft5. PARTIAL, not Mac-validated.
+Archive SHA256 ae0ccc3fd55331372bcb219bb602fd37a697904d42ecbf5f99d513796bc57241.
+This is the ONE operator policy worksheet. D01-D34 hold decisions; P01-P11 is an index.
+No actual value, credential, recovery material, or identifying key path is invented here.
+No test or real Mac change is authorized by this worksheet.
+Unset decisions block affected apply and unsafe dependents, not safe delivery or inspection.
+A shared supported-platform preflight is required for any actual launcher apply.
+Review source snapshots remain unchanged, not alternate operator worksheets:
+macos-provisioning-decisions-worksheet.txt
+macos-provisioning-review-checklist.txt
+UserSpace-audit-readme.txt
+UserSpace-audit-validation.txt
+Original worker audit documents do not define the rewritten D15 audit interface.
+The owner's key-file decision overrides historical mandatory escrow/screenshot choices.
+Additional accounts are ADMIN. SSH and ARD each allow named workstationadmin alone.
+Manual consent/credential gates are accepted. No TCC bypass or argv secrets are allowed.
+Manual evidence cannot be ingested by code or change pending status to PASS.
+
+P01-P11 traceability index
+P01. Confirm target OS builds, supported models, enrollment, and which user preferences also apply to workstationadmin. Do not infer these from the document title.
+Decision records: D01, D02, D03, D16, D33
+
+P02. Asset-tag prompting, safe validation, inclusion in computer naming, and preview are decided. Confirm other naming tokens, approved exceptions, account inventory, and network naming. Additional target accounts are ADMIN.
+Decision records: D04, D05, D06, D07
+
+P03. Confirm exact resource paths, source year, approved URL destinations, alias types, permissions, overwrite rules, migration branch, and backup handling.
+Decision records: D05, D08, D09, D10, D11, D12
+
+P04. Confirm AirDrop Contacts Only versus No One. Resolve AirPlay password reuse and whether inactive receiver options must be recorded as unavailable.
+Decision records: D21, D22
+
+P05. Choose immediate versus five-second password delay, alert sound, and 50 versus 60 percent alert volume. Resolve the Hot Corners exception, recent-app tiles, utility Dock order, and Dock section constraints.
+Decision records: D13, D14, D24, D25, D27
+
+P06. Supply the missing fully disabled notification-app list, complete Location Services exclusions, extension policy, and any intended content under blank headings.
+Decision records: D26, D28, D31, D34
+
+P07. The clarified policy selects workstationadmin alone for both Remote Login SSH with remote-user Full Disk Access and Remote Management with all ARD privileges. All other accounts, including administrators, are excluded from both. The remaining decisions are the supported local authorization or MDM route and controlled acceptance-test arrangements. R15 and R42 define separate positive and negative tests. This restriction controls configured remote access, not an immutable boundary against a local administrator who can later change settings. Verification must detect policy drift without changing local administrator rights.
+Decision records: D17, D33
+
+P08. Designate the Apple Account owner and Find My owner. Resolve Activation Lock recovery and transfer. Decide whether showing Siri while Apple Intelligence is disabled is intentional.
+Decision records: D23, D29, D30
+
+P09. Select App Store authorization and license ownership, update responsibility, and whether Apps and Books device assignment is available. No paid acquisition is implied.
+Decision records: D15
+
+P10. Newly enabled FileVault plaintext export and later manual import are decided under the key-file decision. In d17, module 6 can enable FileVault when it is off and write the NEW key file when FILEVAULT_CONSENT=yes and FILEVAULT_KEY_DIR are set. Operator destination selection, the manual external copy, deferred login, and separately authorized recovery tests remain gates. No escrow selection is required.
+Decision records: D18, D19, D20, D33
+
+P11. Define instructions and secret-free evidence for accepted manual gates, consent, and first-login checks. Manual gates are already acceptable.
+Decision records: D20, D32, D33
+
+D01-D34 canonical decision records
+Unresolved options are alternatives, not approvals.
+
+D01 | R01-R02; P01 | Target builds and hardware
+State: NOT SET.
+Options: Select supported macOS builds, models, and architectures; discover the actual machine and gate it against the selected support set. Historical Sequoia/Ventura references are not defaults.
+Blocks apply: Build- or hardware-dependent apply modules until compatibility is known.
+Approved value/source: ____________________
+Approver and approval date: ____________________
+Applicable build, hardware, enrollment, and target profile: ____________________
+Nonsecret evidence reference and remaining gate: ____________________
+
+D02 | R01; R12; R15; R34; R42; P01 | Management route
+State: NOT SET.
+Options: Unmanaged supported local/manual controls; or enrolled MDM with the exact supported payloads and required licensing.
+Blocks apply: Only operations that require the unconfirmed management capability or consent route.
+Approved value/source: ____________________
+Approver and approval date: ____________________
+Applicable build, hardware, enrollment, and target profile: ____________________
+Nonsecret evidence reference and remaining gate: ____________________
+
+D03 | R07-R08; R21-R40; P01 | Preference scope
+State: NOT SET.
+Options: Choose the stated target-user profile; explicitly select any optional workstationadmin preference profile and whether R08 also applies to target users.
+Blocks apply: Only preferences whose account scope is not selected. Do not infer cross-user scope.
+Approved value/source: ____________________
+Approver and approval date: ____________________
+Applicable build, hardware, enrollment, and target profile: ____________________
+Nonsecret evidence reference and remaining gate: ____________________
+
+D04 | R04; P02 | Account inventory and naming
+State: NOT SET.
+Options: Prompt for each display name, short name, password, and purpose. Confirm local numbered-account pattern or approved exception naming, and the required account count. All additional users are ADMIN.
+Blocks apply: Creation of the affected account and dependent account-bound apply work. No UID 502 assumption; no name or password argv.
+Approved value/source: ____________________
+Approver and approval date: ____________________
+Applicable build, hardware, enrollment, and target profile: ____________________
+Nonsecret evidence reference and remaining gate: ____________________
+
+D05 | R04; R06 | Existing account conflicts
+State: NOT SET.
+Options: Preserve the existing identity; or obtain a separate explicit decision for password, role, name, or home changes.
+Blocks apply: Conflicting account modification, reset, replacement, and dependent migration work only.
+Approved value/source: ____________________
+Approver and approval date: ____________________
+Applicable build, hardware, enrollment, and target profile: ____________________
+Nonsecret evidence reference and remaining gate: ____________________
+
+D06 | R05; P02 | Asset tag and remaining computer naming tokens
+State: PARTIALLY RESOLVED by the explicit key-file decision.
+Resolved: Prompt for a nonempty safe asset tag, use it in computer naming, validate it, and preview complete naming before changes.
+Remaining: Confirm naming variant, model spelling/generation, M-number and trailing-token meanings, and final other values. Do not assume asset tag alone resolves them.
+Blocks apply: Only naming operations whose remaining required tokens or approval are missing.
+Approved value/source: the key-file decision. Actual tag is collected locally, not recorded in shareable docs.
+Approver and approval date: the owner, as recorded in the key-file decision, 7 November 2026, local time.
+Nonsecret evidence reference and remaining gate: ____________________
+
+D07 | R05 | HostName network policy
+State: NOT SET.
+Options: Leave HostName unchanged unless policy requires it; or supply the approved network HostName and uniqueness arrangements.
+Blocks apply: Only HostName changes or naming that cannot meet confirmed network uniqueness. Do not copy ComputerName by default.
+Approved value/source: ____________________
+Approver and approval date: ____________________
+Applicable build, hardware, enrollment, and target profile: ____________________
+Nonsecret evidence reference and remaining gate: ____________________
+
+D08 | R06; P03 | Migration branch and conflict plan
+State: NOT SET.
+Options: No migration selected; or explicit Migration Assistant branch with confirmed source, destination, expected files, backup, ownership, and identity-conflict plan.
+Blocks apply: Migration and conflicting destination changes only. A Dock shortcut is not selection.
+Approved value/source: ____________________
+Approver and approval date: ____________________
+Applicable build, hardware, enrollment, and target profile: ____________________
+Nonsecret evidence reference and remaining gate: ____________________
+
+D09 | R09; P03 | Volume icon source
+State: NOT SET.
+Options: Select an authorized model-appropriate resource and supported customization route; or record unsupported/pending manual work. Preserve the current icon.
+Blocks apply: Volume-icon replacement only. No protected bundle or sealed-volume edit.
+Approved value/source: ____________________
+Approver and approval date: ____________________
+Applicable build, hardware, enrollment, and target profile: ____________________
+Nonsecret evidence reference and remaining gate: ____________________
+
+D10 | R10; P03 | Resource sources and exact paths
+State: NOT SET.
+Options: Supply approved external source roots, year, exact leading-space path component, resource inventory, authorized icons/templates, and intended user-readable destination layout under /Users/Shared.
+Blocks apply: Only copies and derived aliases that need an unknown path, resource, year, or destination. Do not normalize leading spaces.
+Approved value/source: ____________________
+Approver and approval date: ____________________
+Applicable build, hardware, enrollment, and target profile: ____________________
+Nonsecret evidence reference and remaining gate: ____________________
+
+D11 | R10; R13; P03 | URLs and aliases
+State: NOT SET.
+Options: Supply approved URL destinations from operator config, shared bookmark or alias targets from SHARED_ITEMS, documentation shortcut location, and required supported alias types and locked flags. Do not hard-code site URLs or bookmark names in published docs.
+Blocks apply: Affected URL/alias creation and Dock shortcut replacement only.
+Approved value/source: ____________________
+Approver and approval date: ____________________
+Applicable build, hardware, enrollment, and target profile: ____________________
+Nonsecret evidence reference and remaining gate: ____________________
+
+D12 | R02; R10; P03 | Resource preservation and backup
+State: NOT SET.
+Options: Choose approved conflict/overwrite rules, metadata preservation, narrow ownership/readability, backup destination and restoration rules; or leave conflicting items pending.
+Blocks apply: Replacement or overwrite of conflicting content and any dependent operation that needs those assets.
+Approved value/source: ____________________
+Approver and approval date: ____________________
+Applicable build, hardware, enrollment, and target profile: ____________________
+Nonsecret evidence reference and remaining gate: ____________________
+
+D13 | R07; R13; P05 | Dock order and sections
+State: NOT SET.
+Options: Keep the listed required tiles. Select the remaining workstationadmin utility order; approve the representable target app/folder/URL section order if exact global order is impossible.
+Blocks apply: Only the Dock replacement whose final order is not approved.
+Approved value/source: ____________________
+Approver and approval date: ____________________
+Applicable build, hardware, enrollment, and target profile: ____________________
+Nonsecret evidence reference and remaining gate: ____________________
+
+D14 | R07; R13; P05 | Dock folders and recent apps
+State: NOT SET.
+Options: Confirm workstationadmin folder-tile behavior and whether recent apps remain unchanged or use an explicitly selected supported setting. Preserve required target folder tiles.
+Blocks apply: Only unresolved folder or recent-app changes; dependent full Dock replacement if it cannot preserve them safely.
+Approved value/source: ____________________
+Approver and approval date: ____________________
+Applicable build, hardware, enrollment, and target profile: ____________________
+Nonsecret evidence reference and remaining gate: ____________________
+
+D15 | R11-R12; P09 | App delivery, version, and license ownership
+State: NOT SET.
+Options: Choose official compatible vendor delivery and acceptance criteria; for App Store apps, authorized interactive acquisition with receipts/terms, or eligible enrolled Apps and Books assignment. Designate update owner and confirm applicable licenses.
+Blocks apply: Affected app acquisition/installation/update configuration. No purchase or sign-in is implied.
+Approved value/source: ____________________
+Approver and approval date: ____________________
+Applicable build, hardware, enrollment, and target profile: ____________________
+Nonsecret evidence reference and remaining gate: ____________________
+
+D16 | R14 | Firewall inbound acceptance
+State: NOT SET.
+Options: Confirm the required inbound behavior and safe acceptance plan. The firewall must be on; no block-all, stealth, or unrelated rule change is implied.
+Blocks apply: Unspecified inbound-rule changes and final inbound acceptance only; not an independent supported global-enable operation.
+Approved value/source: ____________________
+Approver and approval date: ____________________
+Applicable build, hardware, enrollment, and target profile: ____________________
+Nonsecret evidence reference and remaining gate: ____________________
+
+D17 | R15; R42; P07 | Remote authorization route and test arrangements
+State: NOT SET.
+Options: Choose supported local Settings authorization or exact-capability MDM route. Arrange a controlled client, excluded valid-credential account, synthetic protected fixture, and resume/reboot evidence for later authorization. Allowlist is fixed to workstationadmin alone.
+Blocks apply: Remote changes needing an unavailable authorization route; affected live acceptance stays pending without test arrangements. Do not expand access to test.
+Approved value/source: ____________________
+Approver and approval date: ____________________
+Applicable build, hardware, enrollment, and target profile: ____________________
+Nonsecret evidence reference and remaining gate: ____________________
+
+D18 | R18-R19; P10 | FileVault plaintext export and later manual import
+State: RESOLVED POLICY by the explicit key-file decision. The scripted writer is restored in d17, narrowly, and is not Mac-validated.
+Approved value/source: When FileVault is off, FILEVAULT_CONSENT=yes, and FILEVAULT_KEY_DIR is a valid local folder, module 6 enables FileVault and writes the NEW key as <asset-tag>-FileVault-recovery-key.txt in that folder, mode 0600, owner the operator. Both keys unset keeps the earlier manual path. Require a trusted parent, no overwrite, no symlink, no traversal, and exclusive creation. Keep the key separate from audit, checkpoint, and package. The operator types the password into fdesetup. The suite never prints the key.
+Blocks apply: The scripted enable is refused until FILEVAULT_CONSENT=yes, FILEVAULT_KEY_DIR is valid, the asset tag is recorded, and FileVault is off. Do not request mandatory escrow selection. D20 and D33 retain credential and test gates.
+Import: External import is manual and independent. Export does not prove import. No cloud integration.
+Evidence: Statuses only. No key, filename, destination, or machine identity in shareable reports.
+Approver and approval date: the owner, as recorded in the key-file decision, 7 November 2026, local time.
+Nonsecret export/import status evidence reference: ____________________
+
+D19 | R19; P10 | Superseded screenshot and escrow choice
+State: RESOLVED SUPERSEDED by the explicit key-file decision.
+Approved value/source: Plaintext file export replaces mandatory escrow and screenshot handling. Do not ask for an escrow or screenshot exception selection again.
+Blocks apply: No extra screenshot/escrow decision gate. D18 export safeguards still apply.
+Approver and approval date: the owner, as recorded in the key-file decision, 7 November 2026, local time.
+Historical source: Reviewer D19 snapshot is retained unchanged as superseded policy context.
+
+D20 | R18; P10-P11 | FileVault credential and deferred-login step
+State: NOT SET.
+Options: Use a supported secret-safe credential route or guided manual authorization. Identify intended unlock accounts and deferred login/restart needs without risking the last working unlock account.
+Blocks apply: Only account/token/unlock/encryption apply steps needing that credential or authorization. Missing runtime evidence blocks completion, not delivery.
+Approved value/source: ____________________
+Approver and approval date: ____________________
+Applicable build, hardware, enrollment, and target profile: ____________________
+Nonsecret evidence reference and remaining gate: ____________________
+
+D21 | R23; P04 | AirDrop
+State: NOT SET.
+Options: Select Contacts Only or No One through supported controls.
+Blocks apply: AirDrop policy change only.
+Approved value/source: ____________________
+Approver and approval date: ____________________
+Applicable build, hardware, enrollment, and target profile: ____________________
+Nonsecret evidence reference and remaining gate: ____________________
+
+D22 | R23; P04 | AirPlay inactive controls and secret policy
+State: NOT SET.
+Options: Use a separately approved secret through a supported manual flow where available, or leave the affected step pending/unavailable. Decide handling when receiver-off controls cannot be set. Never recover or copy the login password; do not enable the receiver just to expose controls.
+Blocks apply: Only inactive access/password options that need the missing decision. Required receiver-off and Handoff operations remain separately gated.
+Approved value/source: ____________________
+Approver and approval date: ____________________
+Applicable build, hardware, enrollment, and target profile: ____________________
+Nonsecret evidence reference and remaining gate: ____________________
+
+D23 | R24-R25; P08 | Siri visibility
+State: NOT SET.
+Options: Confirm whether Siri should remain visible while Apple Intelligence is off; use supported build-specific controls. Do not assume all Siri features must be disabled.
+Blocks apply: Only the ambiguous Siri visibility change, not an independent supported Apple Intelligence-off operation.
+Approved value/source: ____________________
+Approver and approval date: ____________________
+Applicable build, hardware, enrollment, and target profile: ____________________
+Nonsecret evidence reference and remaining gate: ____________________
+
+D24 | R26; P05 | Hot Corners exception
+State: NOT SET.
+Options: Choose clear all to none, or define the source exception for an existing nondefault configuration. Stage Manager master state remains unchanged.
+Blocks apply: Only Hot Corners changes where the exception affects the current state.
+Approved value/source: ____________________
+Approver and approval date: ____________________
+Applicable build, hardware, enrollment, and target profile: ____________________
+Nonsecret evidence reference and remaining gate: ____________________
+
+D25 | R28; P05 | Lock password delay
+State: NOT SET.
+Options: Select immediate or five seconds using a supported target-build control.
+Blocks apply: Password-delay apply only; other independently supported saver/display timing operations remain available.
+Approved value/source: ____________________
+Approver and approval date: ____________________
+Applicable build, hardware, enrollment, and target profile: ____________________
+Nonsecret evidence reference and remaining gate: ____________________
+
+D26 | R30; R41; P06 | Fully disabled notifications
+State: NOT SET.
+Options: Supply an exact app list; or leave this extra list unset with no invented disabling operations. Find My lock-screen exception does not require enabling its notifications.
+Blocks apply: Only complete notification-disable operations for unspecified apps; the fixed lock-screen-hiding policy remains independently applicable.
+Approved value/source: ____________________
+Approver and approval date: ____________________
+Applicable build, hardware, enrollment, and target profile: ____________________
+Nonsecret evidence reference and remaining gate: ____________________
+
+D27 | R31; R41; P05 | Alert sound and volume
+State: NOT SET.
+Options: Select a supported alert sound and choose 50 or 60 percent alert volume. Treat these as separate values from output volume.
+Blocks apply: Only alert selection and alert-volume apply for the missing value. Interface feedback may proceed independently.
+Approved value/source: ____________________
+Approver and approval date: ____________________
+Applicable build, hardware, enrollment, and target profile: ____________________
+Nonsecret evidence reference and remaining gate: ____________________
+
+D28 | R33; R41; P06 | Other Location Services exclusions
+State: NOT SET.
+Options: Supply an exact per-app/system-service decision after inventory. Find My, Reminders, Weather, and HomeKit decisions are already stated.
+Blocks apply: Only changes to unspecified location items. No broad almost-all rule or inferred iCloud permission.
+Approved value/source: ____________________
+Approver and approval date: ____________________
+Applicable build, hardware, enrollment, and target profile: ____________________
+Nonsecret evidence reference and remaining gate: ____________________
+
+D29 | R35; P08 | Apple Account and Find My ownership
+State: NOT SET.
+Options: Designate the authorized Apple Account, local Find My owner, organizational recovery, transfer/offboarding, and Activation Lock handling. Otherwise leave sign-in/Find My activation as guided pending steps.
+Blocks apply: Apple Account activation/sign-in and Find My/Activation Lock-affecting operations. Do not sign in just to expose controls.
+Approved value/source: ____________________
+Approver and approval date: ____________________
+Applicable build, hardware, enrollment, and target profile: ____________________
+Nonsecret evidence reference and remaining gate: ____________________
+
+D30 | R36; P08 | iCloud inventory and dependencies
+State: NOT SET.
+Options: After authorized sign-in, confirm the exact sync inventory and supported Find My-only configuration; resolve service dependencies without automatic deletion.
+Blocks apply: Only unknown sync toggles and dependent cloud changes. Never automate sign-out, deletion, or erase prompts.
+Approved value/source: ____________________
+Approver and approval date: ____________________
+Applicable build, hardware, enrollment, and target profile: ____________________
+Nonsecret evidence reference and remaining gate: ____________________
+
+D31 | R40; R41; P06 | Login Items and Extensions policy
+State: NOT SET.
+Options: Review post-install inventory and choose explicitly approved item states, vendor/signing identities, and privileges. Otherwise report decisions as pending.
+Blocks apply: Only approval/disablement of undecided login items or extensions.
+Approved value/source: ____________________
+Approver and approval date: ____________________
+Applicable build, hardware, enrollment, and target profile: ____________________
+Nonsecret evidence reference and remaining gate: ____________________
+
+D32 | R01; R03-R04; R20; R27; R32-R35; P11 | Guided manual steps and consent
+State: NOT SET.
+Options: Use supported manual steps for credentials, unavailable controls, first-login verification, browser confirmation, native account pictures, Apple Account, TCC, and authorization. Manual gates are already acceptable; define instructions and evidence without secrets.
+Blocks apply: Only operations that need the outstanding user interaction. Never demand argv credentials or certify an unperformed gate.
+Approved value/source: ____________________
+Approver and approval date: ____________________
+Applicable build, hardware, enrollment, and target profile: ____________________
+Nonsecret evidence reference and remaining gate: ____________________
+
+D33 | R01-R42; P01; P07; P10-P11 | Future real Mac acceptance
+State: NOT SET.
+Options: Separately authorize a representative disposable Mac pilot, build/hardware matrix, safe failure/retry tests, remote positive/negative tests, restart unlock and recovery verification. Current author and QA have no real Mac change authority.
+Blocks apply: All real Mac changes and live production acceptance until separately authorized and evidenced. Does not block code delivery or static code review.
+Approved value/source: ____________________
+Approver and approval date: ____________________
+Applicable build, hardware, enrollment, and target profile: ____________________
+Nonsecret evidence reference and remaining gate: ____________________
+
+D34 | R41; P06 | Blank headings and unfinished lists
+State: NOT SET.
+Options: Leave them with no inferred operation; or supply a later explicit policy change. Existing explicit requirements still apply.
+Blocks apply: Only additional operations inferred from blank Energy, Lock Screen, Game Centre, iCloud, or unfinished Apple Account sections.
+Approved value/source: ____________________
+Approver and approval date: ____________________
+Applicable build, hardware, enrollment, and target profile: ____________________
+Nonsecret evidence reference and remaining gate: ____________________
+
+
+
+
+R16 software-update policy keys
+These six keys must be present in policy.conf. There are no defaults. They are required fixed values, not operator choices.
+They are not new reviewer D-IDs and do not change the D01-D34 inventory.
+Attribute: reviewer-worksheet decision dated 9 November 2026, 21:35 local time.
+The owner's own words, relayed by the reviewer:
+"No, security-update settings must always stay on."
+Compared with the earlier worksheet snapshot, only that time-zone label line changed. The decisions worksheet itself was not edited in this documentation task.
+The five security-update keys accept only on. UPDATES_MACOS_INSTALL accepts only off.
+There is no operator-chosen off for the security-update keys.
+Unset, malformed, or any other value reports BLOCKED_POLICY for that setting, and nothing is written.
+A payload for SoftwareUpdate, commerce, appstore, applicationaccess, or ManagedClient reports BLOCKED_POLICY and is never overridden.
+"MDM enrollment: Yes", including "MDM enrollment: Yes (User Approved)", also reports BLOCKED_POLICY. That covers Declarative Device Management.
+"Enrolled via DEP: Yes" also counts as managed and reports BLOCKED_POLICY.
+"Enrolled via DEP: No" continues to the MDM enrollment line. An odd or unparseable DEP line reports UNKNOWN.
+"No profiles" requires an exact empty-listing sentence plus "MDM enrollment: No".
+A Mac that has only unrelated profiles reports UNKNOWN. Nothing is written.
+The suite never installs updates, never restarts, and never takes an Apple Account or paid action.
+App Store authorization (P09) stays manual.
+
+UPDATES_AUTO_CHECK | R16 | Automatic check
+State: RESOLVED POLICY by the 9 November 2026 reviewer-worksheet decision.
+Required value: on, present in trusted policy.conf.
+The stored AutomaticCheckEnabled value is also cross-checked with read-only softwareupdate --schedule.
+Blocks apply: This setting only, when the key is unset, not on, managed, or unreadable.
+
+UPDATES_AUTO_DOWNLOAD | R16 | Automatic download
+State: RESOLVED POLICY by the 9 November 2026 reviewer-worksheet decision.
+Required value: on, present in trusted policy.conf.
+Blocks apply: This setting only, when the key is unset, not on, managed, or unreadable.
+
+UPDATES_CONFIG_DATA | R16 | Configuration data
+State: RESOLVED POLICY by the 9 November 2026 reviewer-worksheet decision.
+Required value: on, present in trusted policy.conf.
+Blocks apply: This setting only, when the key is unset, not on, managed, or unreadable.
+
+UPDATES_CRITICAL | R16 | Critical updates
+State: RESOLVED POLICY by the 9 November 2026 reviewer-worksheet decision.
+Required value: on, present in trusted policy.conf.
+Blocks apply: This setting only, when the key is unset, not on, managed, or unreadable.
+
+UPDATES_MACOS_INSTALL | R16 | Automatic macOS installation
+State: RESOLVED POLICY by the 9 November 2026 reviewer-worksheet decision.
+Required value: off, present in trusted policy.conf.
+Report label AutoInstallOSUpdates names the key AutomaticallyInstallMacOSUpdates.
+Blocks apply: This setting only, when the key is unset, not off, managed, or unreadable.
+
+UPDATES_APP_STORE | R16 | App Store automatic app updates
+State: RESOLVED POLICY by the 9 November 2026 reviewer-worksheet decision.
+Required value: on, present in trusted policy.conf. This preference is not App Store authorization.
+Blocks apply: This setting only, when the key is unset, not on, managed, or unreadable. Complete P09 authorization separately and manually.
+
+Canonical reconciliation status
+34 reviewer records retained: 31 NOT SET, 1 PARTIALLY RESOLVED, and 2 RESOLVED. The six R16 policy keys are additional required values, resolved by the 9 November 2026 reviewer-worksheet decision, and do not add D-IDs.
+D06 is partial; tag prompting/validation/preview policy is decided, remaining tokens are open.
+D18 is resolved plaintext-export policy. D19 is resolved superseded escrow/screenshot handling.
+Policy resolution does not certify implementation, external import, or live acceptance.
+All P01-P11 are mapped. D05 -> P02/P03, D07 -> P02, and D16 -> P01 are editorial crosswalks.
+No code change or scope reduction invents answers for the remaining decisions.
+
+Operator config keys added in D8 and tightened in D9
+APP_LIST belongs in both policy.conf and session.conf.
+Format: Label/BundleName[/store] entries joined by ":".
+Exact example: ExampleChat/ExampleChat:Example Sheets/Example Sheets/store.
+Label and BundleName use [A-Za-z0-9 .+-]. BundleName is the .app name without the suffix.
+Optional trailing /store marks an App Store app and is the only allowed third field.
+wsp_app_list rejects the whole value when any empty part appears, including a trailing ":".
+It also rejects an empty third field, a Label with leading or trailing spaces, and a BundleName that starts with "." or has leading or trailing spaces.
+Unset or malformed APP_LIST makes the apps module and audit app-list check report BLOCKED_POLICY.
+There is no built-in default app list.
+Dock inventories take their approved apps from APP_LIST and operator config, not from hard-coded doc lists.
+Module 5 installs only the non-store APP_LIST labels that also appear in APP_PACKAGES, and only from a local signed package in APP_SOURCE_DIR.
+
+Operator config keys added in D16 (module 5) and D17 (module 6)
+APP_PACKAGES, APP_TEAM_IDS, APP_SOURCE_DIR, and APP_INSTALL_CONSENT belong in trusted policy.conf only. The session file is never read for installs. Do not put a site value in the suite.
+APP_PACKAGES uses Label=FILE entries separated by ":". Label must be a non-store APP_LIST label, exact, with spaces allowed, and at most one entry per label. FILE ends in .pkg or .dmg, uses only A-Za-z0-9, space, period, underscore, plus, or hyphen, has no "/", no leading "." or "-", no trailing space, and is at most 100 characters. Example: ExampleChat=ExampleChat-1.0.pkg:ExampleNotes=ExampleNotes 2.dmg.
+APP_TEAM_IDS uses Label=TEAMID entries separated by ":" only. No commas, no spaces around the separator, and no bare Team IDs. TEAMID is exactly 10 characters from A-Z and 0-9. No duplicate label. Example: ExampleChat=ABCDE12345:ExampleNotes=FGHIJ67890. Those example Team IDs are fictional. Each Team ID is bound to its own label. Unset or empty APP_TEAM_IDS refuses apply (BLOCKED_POLICY).
+APP_SOURCE_DIR is the operator's own absolute folder. Allowed characters are A-Za-z0-9, space, period, underscore, plus, hyphen, and slash. The value must not contain "..", must not contain "//", must not have a trailing slash, must not use a "." or ".." path segment, must be at most 200 characters, and must not be under /Applications, /Library/Management, or /System. The folder and every ancestor must be trusted.
+APP_INSTALL_CONSENT must be yes for apply. Unset or any other value keeps the module inspect-only and writes nothing.
+The suite never downloads, never uses the App Store, never uses an Apple Account, and never makes a purchase. APP_LIST entries with /store stay manual (PENDING_CONSENT).
+Approved APP_PACKAGES value/source (local only, never a site value in the suite): ____________________
+Approved APP_TEAM_IDS value/source (fictional examples only in these docs): ____________________
+Approved APP_SOURCE_DIR value/source (local only, never a site value in the suite): ____________________
+Approved APP_INSTALL_CONSENT value/source: ____________________
+Approver and approval date: ____________________
+
+FILEVAULT_CONSENT and FILEVAULT_KEY_DIR belong in trusted policy.conf only. Do not put a site value in the suite. Do not put a key or a secret in the policy file or in this worksheet.
+FILEVAULT_CONSENT must be exactly yes for the scripted enable and key file. Unset, together with FILEVAULT_KEY_DIR unset, keeps the earlier manual path (PENDING_CONSENT). Any other partial or invalid setting reports BLOCKED_POLICY and does not enable FileVault.
+FILEVAULT_KEY_DIR is the operator-chosen absolute folder. Allowed characters are A-Za-z0-9, space, period, underscore, plus, hyphen, and slash. The value must not contain "//", must not use a "." or ".." path segment, must not have a trailing slash, and must be at most 200 characters. It must not be under /Applications, /Library/Management, /System, /private, /tmp, /var, /usr, /bin, or /sbin, must not be the suite folder or a folder under it, and must not be a cloud-sync folder. Interface section 13e lists the refused cloud-sync name fragments. The folder must already exist, must not be a symlink, and must be on a local disk. Prefer the approved external storage. Do not put FILEVAULT_KEY_DIR in a synced folder.
+Approved FILEVAULT_CONSENT value/source: ____________________
+Approved FILEVAULT_KEY_DIR value/source (local only, never a site value in the suite, never a secret): ____________________
+Approver and approval date: ____________________
+
+WSP_OPERATOR defaults to "workstationadmin". That value is also the suite file-name prefix.
+It is an operator-account convention, not an employer or site value.
+
+Public-repo scrub and static check tooling
+workstationadmin-static-check.txt is a source scanner. It executes nothing it scans.
+It fails on unlisted direct native reads, unchecked pipelines, and pipes into listed text tools after bootstrap.
+workstationadmin-scrub-check.txt is a public-repo scrub scanner. It executes nothing it scans.
+Site-specific patterns come from a private local file outside the suite directory.
+Docs never name or quote that file's patterns.
+Missing, empty, invalid-ERE, or in-suite site files exit 3.
+Release gate command:
+bash workstationadmin-scrub-check.txt EXPORT_DIR --site-file FILE --strict-docs --expect-exempt N
+For this frozen archive, N is 3. N is the exemption-token count in the scrub-check file itself.
+Never use --generic-only for release. Scan an export. Symlinks, special files, and .git entries are hits.
+The exemption is matched on the relative path. A same-named file in a subdirectory is a hit.
+A different exempt count is a hit. Do not write the exemption token in these docs.
+The check also scans dotfiles and nested directories.
+Built-in rules cover foreign IP shapes, personal or automated-reply e-mail addresses, disallowed hosts, and vendor product words.
+Account existence reports missing only for dscl exit 56 with empty stdout and not-found stderr class with successful capture.
+Anything else is UNKNOWN. UNKNOWN is incomplete evidence, not a pass.
+Preflight and audit report a missing required operator as FAILED. The accounts module reports PENDING_CONSENT.
+
+Operator config for module 2
+The operator file is user-prefs.conf in the trusted session-policy directory, beside session.conf.
+It is root-owned and trust-checked. There are no defaults. Grammar: id|domain|key|type|value.
+One syntax error, a missing or empty file, a repeated id, or a repeated (domain,key) pair rejects the whole file (BLOCKED_POLICY preferences-config).
+id must match ^[a-z0-9][a-z0-9-]{0,31}$ and be unique. Use hyphens in long ids so a 24-character id is not shown as [opaque-token]. At most 64 entries.
+Integers must match ^(0|-?[1-9][0-9]{0,8})$: 0 and negatives allowed, no leading zeros, no -0, no plus.
+A domain's first character must be alphanumeric. A key's first character may be alphanumeric or underscore. The accepted regular expression is [A-Za-z0-9_][A-Za-z0-9._-]{0,99}, so a key may start with any number of underscores. A domain may not start with an underscore.
+Apply on both module-2 entry points, and on the firstlogin installer, requires USER_PREFS_CONSENT=yes in session.conf. Unset or any other value drops apply to inspect and reports BLOCKED_POLICY apply-gate.
+UserSpace-preferences apply, without --firstlogin, also needs the typed word APPLY on stdin. The prompt is written to file descriptor 5. No terminal or a wrong answer reports PENDING_CONSENT apply-gate, writes nothing, and ends with exit 2 if nothing else fails. The offline userprefs path has no second prompt. The first-login path needs both a valid consent record and its own typed APPLY on a terminal. At login there is no terminal, so that path reports PENDING_CONSENT and writes nothing. The notification shows for each first-login run that stops at PENDING_CONSENT. A run without --firstlogin does not show a notification. The PENDING_CONSENT record detail ends with notify=shown (none) or notify=failed (not-found|other|timeout).
+UserSpace-preferences.txt does not accept --output. Report records go to stdout.
+USER_PREFS remains an allowlisted session key. The former UserSpace-firstlogin inspect script is removed from this archive.
+The allowlist is a fixed domain-to-key table in the library. Configuration can only narrow it. There is no operator intersect file. The exact keys are listed in the plan. A domain or key outside the table is blocked for that entry only.
+UserSpace-preferences.txt is the logged-in path and refuses root. The launcher module userprefs is the offline path and is only for a home that is not logged in and has no process of that user's UID.
+A home folder path that contains a space is not handled by module 2.
+
+Operator config for module 3
+FIRSTLOGIN_CONSENT must be yes in trusted policy.conf for firstlogin apply. Unset or any other value reports BLOCKED_POLICY apply-gate and writes nothing.
+FIRSTLOGIN_LABEL is optional. The default is com.example.workstationprovisioning.firstlogin. A valid value is a generic reverse-DNS label: 3 to 5 dotted parts of [a-z0-9-], first part starting with a letter, at most 100 characters, never com.apple.* or apple.*. If the line is present and the value is rejected or invalid, the module reports BLOCKED_POLICY fl-label and writes nothing. Only an absent line uses the default.
+FIRSTLOGIN_USERS is removed from the root policy allowlist. A FIRSTLOGIN_USERS line is ignored like any unknown key. The installer binds to session policy USERS.
+The consent record is written last, as firstlogin-consent.conf, and is bound to the SHA-256 of user-prefs.conf and to the exact USERS value. A later change of either file makes the record stale until apply is run again.
+Approved FIRSTLOGIN_CONSENT value/source: ____________________
+Approved FIRSTLOGIN_LABEL value/source, or default: ____________________
+Approver and approval date: ____________________
+
+Operator config for module 4
+SHARED_COPY_CONSENT must be yes in trusted policy.conf for shared apply. Unset or any other value keeps the module inspect-only and writes nothing.
+SHARED_SOURCE_DIR is the operator's own absolute source folder. Allowed characters are A-Za-z0-9, space, period, underscore, plus, hyphen, and slash. The value must not contain "..", must not contain "//", must not have a trailing slash, and must not be an ancestor of /Users/Shared. Do not put a site value in the suite.
+SHARED_ITEMS is names separated by ":", at most 50, no "/", no leading ".", no duplicate. The module-4 writer reads only the root-policy value. UserSpace-audit reads only the session.conf value, as a read-only presence check. Keep both lists equal. The session value never changes what is copied.
+The source folder named by SHARED_SOURCE_DIR must never hold secrets. Every copied file is published 0644, including a source file that others cannot read.
+SHARED_CONFLICT is skip (the default) or backup-replace. Any other value refuses apply.
+Approved SHARED_COPY_CONSENT value/source: ____________________
+Approved SHARED_SOURCE_DIR value/source (local only, never a site value in the suite): ____________________
+Approved SHARED_ITEMS value/source: ____________________
+Approved SHARED_CONFLICT value/source: ____________________
+Approver and approval date: ____________________
+
+D15 capability limits relevant to decisions
+Local signed package install remains restored through the apps module, subject to the policy keys above. It is not Mac-validated. App Store /store entries stay manual. First launch, sign-in, licensing, and privacy consent stay manual.
+Shared-resource copying remains restored through the shared module, subject to the policy keys above. It is not Mac-validated.
+The FileVault enable and NEW-key writer is restored in this draft through the filevault module, subject to the policy keys above. It is not Mac-validated. The manual external copy and the restart unlock test remain manual.
+The admin-session Dock and Finder writers remain disabled. That path is out of scope by design, per the owner's decision of 19 November 2026, relayed by the coordinator, and is not unfinished work. Module 2 can apply operator-listed keys in an allowlisted per-user domain; that does not restore Dock layout.
+First-login deployment is restored in this draft through the firstlogin installer and the installed UserSpace-preferences --firstlogin agent, subject to the policy keys above. launchd behaviour is not Mac-validated.
+Software-update preference writes remain restored for the six required keys. The suite still never installs updates or restarts.
+User-preference writes are restored through the two module-2 entry points when user-prefs.conf and USER_PREFS_CONSENT=yes are present.
+UserSpace-firstlogin.txt is removed from this archive. No package command deploys session policy. The firstlogin installer deploys the agent copies, the plist, and the consent record only after an authorized apply.
+Names now use templates with {ASSET} and NAMES confirmation; legacy explicit keys are ignored.
+HostName is never set. Any approved HostName requirement needs separate supported manual handling.
+Accounts creation is guided Settings only. The sysadminctl creation route is removed.
+No complete decision worksheet or manual evidence is consumed by the code.
+Unconditional pending/blocked records can remain after an operator records a decision.
+Do not enter needless legacy values to obtain a passing report.
+The D15 reader includes TARGET_OS_MAJOR. Ordinary audit needs an approved numeric baseline
+in trusted root-owned readable session policy. No installer is supplied. Missing/mismatched
+policy refuses; an authorized untested override does not establish compliance.
+
+Key-file recovery policy retained
+When module 6 is configured and FileVault is off, the suite writes the NEW key as <asset-tag>-FileVault-recovery-key.txt in FILEVAULT_KEY_DIR, mode 0600, owner the operator. When both policy keys are unset, enable FileVault in Settings and save the NEW key by hand into that same file name.
+Require 0600, a trusted parent, no overwrite, no symlink or traversal, and exclusive creation.
+Plaintext risk is accepted. Do not demand escrow selection again.
+Keep the key outside diagnostics, checkpoints, the delivered package, and cloud-synced paths. Prefer the approved external storage.
+Do not put the key in argv, chat, logs, documentation, or screenshots.
+The operator types the password into fdesetup. The suite never prints the key. The suite never disables FileVault, never rotates a key, and never reads an existing key.
+Shareable reports contain statuses only, never the key, a filename with an asset tag, a destination, or a machine identity.
+External import is separately manual and unverified by code, even after the key file is written. The key-external-import code result remains pending. Operator evidence is separate.
+Do not blindly save again, rotate, or re-enable FileVault. If the NEW key was not saved after an enable, do not restart. Create a new personal key by hand with fdesetup changerecovery -personal and save it.
+
+Acceptance and feedback
+D33 still needs separately authorized representative disposable-Mac testing.
+Static guarded delivery does not mean full automation, Mac validation, or pilot authority.
+The D4 reviewer records independent 144/144 D4 mock assertions.
+Interface line 6 (section 1 status) says PARTIAL, that module 6 is included, that one path (admin-session) stays disabled, and "Disabled is not fulfilled. Not Mac-validated." These documents are locked to d18 draft5 after the reviewer record, D18 DRAFT4 DIFF CHECK, APPROVED PARTIAL, 0 blockers. Status: PARTIAL, not Mac-validated. No native or production approval is claimed.
+No harness or Mac operation was executed for these documents.
+Use baseline -> explicitly selected authorized apply -> same-snapshot/policy post-audit.
+Use the same approved session policy for baseline and post-audit. Record observed results only.
+An authorized untested override remains unvalidated; changed code/policy needs a new run set.
+Record archive hash, suite_id, entry/lib hashes, nonsecret policy revision and generated run IDs.
+Keep versioned outputs separate. Compare stable check families, not cross-run salted account labels.
+Review a failed mutation, repair it, and authorize a retry only after current-state reinspection.
+Manually inspect/redact diagnostic reports before the user attaches approved output in this chat.
+No automatic telemetry, upload, or cloud import exists. Local identity checkpoints are not attachments.
+
+D15 partial-package boundary
+The mandatory platform gate requires an admin operator, enabled SIP, and readable MDM state.
+These shared safety prerequisites do not reopen unrelated unset operation decisions.
+One launcher mutation path remains disabled: admin-session. That path is out of scope by design and is not unfinished work.
+The updates writer, the two module-2 entry points, the firstlogin installer, the shared-copy writer, the apps install writer, and the FileVault key writer are restored as described in the plan.
+Disabled admin-session settings are out of scope, not operational success. Safe partial delivery is a separate decision.
+No operator manual evidence is ingested by code. It cannot change pending code statuses to PASS.
+Registry consumption now requires trusted ancestry, root ownership and exact mode 0600.
+Trust is path-checked with detected-ACL refusal, not pinned through use.
+Manual FileVault save, native ACL behavior, and trusted-actor races still require validation.
+The former UserSpace-firstlogin inspect script is removed from this archive. The installed agent refuses an unlisted user (exit 4). That refusal is not provisioning compliance.
+
+D15 staging and pilot interpretation
+This canonical worksheet retains all 34 decisions. No code change resolves an unset policy.
+0700 report-parent and 0644 session-policy are recommended deployment modes, not enforced exact modes.
+Path checks do not pin objects. No concurrent root/operator modification is a bounded-pilot assumption.
+D5-01 marker/capture and metadata paths retain the D7 static repair carried into D15. DV01 salt hardening remains.
+DV02-DV08 wording follows reviewer dispositions. No policy decision is resolved by these repairs.
+Locked to d18 draft5. PARTIAL, not Mac-validated. No new code blocker is asserted by those docs-only limits.
+Locked to d18 draft5. PARTIAL, not Mac-validated. The earlier D17, D16, D15, and D14 documentation lock history is kept. The D12, D13, and D14 staging drafts, and the preserved d15-draft3 and d15-draft5 staging drafts, were not modified.
+
+D15 metadata and evidence
+Version/build/arch/GUID consumers use strict readers. Invalid report metadata is unknown.
+Author-reported pass=510 fail=0 on this draft5 tar, with stall_total 1150 seconds, is not this task's execution or independent QA. The harness record states that a run with stall_total greater than 5 seconds is not a clean pass. These documents are locked to d18 draft5. Status: PARTIAL, not Mac-validated.
+Scalar capture does not certify lists/preferences, native hardware behavior or manual completion.
+
+D15 capture and test-evidence boundary
+Central byte-integrity/NUL rejection covers routed tool output, not all filesystem/policy/bootstrap reads.
+Capture cap is 1 MiB. Tool time limits are not supplied for operator commands.
+Harness run-helper 60-second limit and mark-checked 1500-second budget are QA-only, not universal deadlines.
+Author reports exit 0, pass=510, fail=0, runs=1692, timeouts=0, wall 2774.515 seconds, stall_total 1150 seconds, ticker_max_gap 418 seconds, and active 1624 seconds on this draft5 tar. The author record states there was no mutation chain, because the review is diff-only. The harness record states that a run with stall_total greater than 5 seconds is not a clean pass. This is author evidence only. These documents are locked to d18 draft5. Status: PARTIAL, not Mac-validated. No harness execution or independent validation occurred in this documentation task.
+These repairs do not resolve policy decisions or manual import and restart-unlock acceptance. Locked to d18 draft5. PARTIAL, not Mac-validated.

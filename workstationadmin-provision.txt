@@ -1,0 +1,148 @@
+#!/bin/bash
+# workstationadmin-provision.txt - launcher
+# Account: workstationadmin, in its own GUI console session.
+# Root: never as root; S modules are started with sudo, which prompts by itself.
+# Bash 3.2, stock macOS tools only.
+# Dry run (inspect) is the default; changes happen only with --mode apply.
+# No secret is ever accepted as an argument, written to a log or reported.
+# Usage (FUTURE, separately authorized operator work only):
+#   /bin/bash workstationadmin-provision.txt [--mode inspect|apply|verify]
+#        [--module NAME]... [--output /abs/new-report.txt]
+#        [--plan-run ID] [--apply-run ID] [-h]
+# --plan-run/--apply-run record which earlier run IDs this run follows (link
+# record only; nothing is skipped or trusted because of them).
+# Apply: preflight always runs first (through sudo, inspect); any preflight
+# result other than exit 0 stops every other module (fail closed).
+# DRAFT d18: apply is ENABLED for updates (update preferences only, never installs or
+# restarts), for userprefs (offline user-preference path; the logged-in path is UserSpace-preferences.txt, run by the
+# user), for firstlogin (module 3: installs the first-login LaunchAgent and its consent record; it writes nothing into any
+# user's home, loads nothing and runs nothing at install time) and for shared (module 4: copies the operator's resource items from the
+# operator-chosen source into /Users/Shared, only with SHARED_COPY_CONSENT=yes in the root policy) and for apps (module 5: installs
+# from the operator's LOCAL signed .pkg/.dmg files only, Team ID allowlist APP_TEAM_IDS, APP_INSTALL_CONSENT=yes and its own typed
+# APPLY; never downloads) and for filevault (module 6: enables FileVault only when it is off, with FILEVAULT_CONSENT=yes and its own
+# typed APPLY, and writes the NEW recovery key to <asset-tag>-FileVault-recovery-key.txt, mode 600, in FILEVAULT_KEY_DIR; FileVault
+# already on: no rotation, no key exported), and still DISABLED in admin-session (inspect only). Disabled is not fulfilled.
+# Default mode: inspect (dry run, report type "plan"). apply asks for typed APPLY.
+# Modules (S = run through sudo, W = run as workstationadmin):
+#   preflight(S) accounts(S) names(S) firewall(S) ssh(S) ard(S) filevault(S)
+#   updates(S) userprefs(S) power(S) shared(S) apps(S) admin-session(W) firstlogin(S) gates(W)
+# Resume: every run re-inspects real state; checkpoints are history only and
+# never cause a step to be skipped. After an interruption or failure:
+# re-run inspect, review the report, repair, and get review before any apply
+# retry. Never blindly re-run a failed mutation.
+# Exit: 0 complete, 2 incomplete, 3 FAILED present, 4 refused, 64 usage.
+# ---- trusted bootstrap (CR01) ------------------------------------------
+# Runs before anything else: fixed PATH, readonly EUID check, then trust checks
+# on the suite directory, every ancestor and the library, using only absolute
+# tool paths. The fixture hook is honoured only off macOS, as non-root, under a
+# canonical /tmp path; otherwise it is refused, never silently relaxed.
+set +x +a   # no tracing; no allexport (D3-03)
+# d14 (reviewer S1): every function that exists at this point was imported from the caller's environment (exported BASH_FUNC_*) or
+# defined by a BASH_ENV startup file; none is trusted, so all are discarded before the first tool name is resolved. BASH_ENV
+# itself has already been read by this shell (it cannot be cleared in time); unsetting it only protects the child shells.
+for _wsp_f in $(compgen -A function); do unset -f "$_wsp_f"; done
+unset BASH_ENV ENV
+PATH=/usr/bin:/bin:/usr/sbin:/sbin; export PATH
+case "${EUID:-x}" in ''|*[!0-9]*) echo "REFUSED: EUID unreadable" >&2; exit 4;; esac
+_wsp_os=$(/usr/bin/uname -s 2>/dev/null || /bin/uname -s)
+_wsp_fx=0
+if [ -n "${WSP_FIXTURE_ROOT:-}" ]; then
+  if [ "$_wsp_os" = Darwin ] || [ -d /System/Library/CoreServices ] || [ "$EUID" -eq 0 ]; then echo "REFUSED: fixture hook not allowed here" >&2; exit 4; fi
+  _wsp_c=$(cd "$WSP_FIXTURE_ROOT" 2>/dev/null && pwd -P) || { echo "REFUSED: fixture root" >&2; exit 4; }
+  case "$_wsp_c" in /tmp/?*) ;; *) echo "REFUSED: fixture root must canonically be under /tmp" >&2; exit 4;; esac
+  [ "$_wsp_c" = "${WSP_FIXTURE_ROOT%/}" ] || { echo "REFUSED: fixture root has a symlink" >&2; exit 4; }
+  _wsp_fx=1
+fi
+# Inherited suite-internal variables are discarded, including their export
+# attribute (documentation D4-1): unset removes both. Only the validated fixture hook stays.
+for _wsp_v in $(compgen -v WSP_); do case "$_wsp_v" in WSP_FIXTURE_ROOT) ;; *) unset "$_wsp_v";; esac; done
+[ "$_wsp_fx" -eq 1 ] || unset WSP_FIXTURE_ROOT
+_wsp_st() { if [ "$_wsp_os" = Darwin ]; then /usr/bin/stat -f "$1" "$2"; else /usr/bin/stat -c "$3" "$2"; fi; }
+_wsp_noacl() { # deny by default (D3-01): "+" refuses; "@" needs a one-line "ls -lde"
+  _wsp_l=$(/bin/ls -ld "$1" 2>/dev/null) || return 1
+  _wsp_l=${_wsp_l%% *}
+  case "$_wsp_l" in
+    ??????????|??????????.) return 0;;
+    ??????????@) _wsp_n=$(/bin/ls -lde "$1" 2>/dev/null) || return 1
+                 [ "$(printf '%s\n' "$_wsp_n" | /usr/bin/wc -l | /usr/bin/tr -d ' ')" = 1 ];;
+    *) return 1;;
+  esac
+}
+_wsp_trust() { # path: not symlink, no ACL, owner root|workstationadmin (fixture: caller), not group/world writable
+  [ -L "$1" ] && return 1
+  _wsp_noacl "$1" || return 1
+  _wsp_o=$(_wsp_st %Su "$1" %U) || return 1; _wsp_m=$(_wsp_st %Lp "$1" %a) || return 1
+  case "$_wsp_o" in root|workstationadmin) ;; *) [ "$_wsp_fx" -eq 1 ] && [ "$_wsp_o" = "$(/usr/bin/id -un)" ] || return 1;; esac
+  case "$_wsp_m" in *[2367]?|*[2367]) case "$_wsp_m" in 1???) [ -d "$1" ] && [ "$1" != "$_wsp_dir" ] || return 1;; *) return 1;; esac;; esac
+  return 0
+}
+case "$0" in /*) _wsp_self="$0";; *) _wsp_self="$(pwd -P)/$0";; esac
+_wsp_dir=$(cd "${_wsp_self%/*}" 2>/dev/null && pwd -P) || { echo "REFUSED: suite directory" >&2; exit 4; }
+_wsp_a="$_wsp_dir"
+while :; do _wsp_trust "$_wsp_a" || { echo "REFUSED: untrusted suite directory or ancestor" >&2; exit 4; }; [ "$_wsp_a" = / ] && break; _wsp_a=${_wsp_a%/*}; [ -n "$_wsp_a" ] || _wsp_a=/; done
+_wsp_lib="$_wsp_dir/workstationadmin-lib.txt"
+if ! { [ -f "$_wsp_lib" ] && _wsp_trust "$_wsp_lib"; }; then echo "REFUSED: library missing or untrusted" >&2; exit 4; fi
+_wsp_trust "$_wsp_dir/${_wsp_self##*/}" || { echo "REFUSED: entry script untrusted" >&2; exit 4; }
+# Residual risk: a process running as root or workstationadmin can still replace
+# files between this check and use. Those identities are trusted by design.
+# shellcheck source=/dev/null
+. "$_wsp_lib"
+WSP_MODULE="launcher"
+[ "$EUID" -ne 0 ] || wsp_refuse "run as workstationadmin, not root; modules elevate individually"
+ALL="preflight accounts names firewall ssh ard filevault updates userprefs power shared apps admin-session firstlogin gates"
+mods=""; out=""; WSP_MODE=inspect; plan_run=""; apply_run=""
+valid_rid() { case "$1" in ''|*[!A-Za-z0-9+-]*) return 1;; esac; [ ${#1} -le 48 ]; }   # + allowed (UTC offsets, B05)
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --mode) [ $# -ge 2 ] || exit 64; case "$2" in inspect|apply|verify) WSP_MODE="$2";; *) echo "usage error: mode" >&5; exit 64;; esac; shift 2;;
+    --module) [ $# -ge 2 ] || exit 64; case " $ALL " in *" $2 "*) mods="$mods $2";; *) echo "usage error: unknown module" >&5; exit 64;; esac; shift 2;;
+    --output) [ $# -ge 2 ] || exit 64; out="$2"; shift 2;;
+    --plan-run) if ! { [ $# -ge 2 ] && valid_rid "$2"; }; then echo "usage error: plan-run" >&5; exit 64; fi; plan_run="$2"; shift 2;;
+    --apply-run) if ! { [ $# -ge 2 ] && valid_rid "$2"; }; then echo "usage error: apply-run" >&5; exit 64; fi; apply_run="$2"; shift 2;;
+    -h|--help) wsp_help;;
+    *) echo "usage error: unknown argument (value not echoed; secrets are never arguments)" >&5; exit 64;;
+  esac
+done
+[ -n "$mods" ] || mods="$ALL"
+if [ "$WSP_FIXTURE" -eq 0 ]; then
+  [ "$(/usr/bin/uname -s)" = "Darwin" ] || wsp_refuse "not macOS"
+fi
+ctx=$(wsp_context_why operator-user); [ "$ctx" = ok ] || wsp_refuse "${ctx:-context check failed}"
+for f in "$0" "$_wsp_lib"; do wsp_check_file "$f" || wsp_refuse "suite file trust check failed"; done
+if [ "$WSP_MODE" = "apply" ]; then wsp_confirm "Apply mode changes this Mac." "APPLY" || wsp_refuse "apply not confirmed"; fi
+[ -n "$out" ] && wsp_open_report "$out"
+wsp_new_run_id
+wsp_new_salt
+[ -n "$WSP_RID_SALT" ] || wsp_refuse "no random source for pseudonyms"
+case "$WSP_MODE" in inspect) WSP_REPORT_TYPE=plan;; apply) WSP_REPORT_TYPE=apply-result;; verify) WSP_REPORT_TYPE=verify;; esac
+WSP_LINK_PLAN="${plan_run:-}"; WSP_LINK_APPLY="${apply_run:-}"
+wsp_header "$0"
+if [ -n "$plan_run$apply_run" ]; then wsp_emit "type=link	plan_run=${plan_run:-none}	apply_run=${apply_run:-none}"; fi
+worst=0
+runmod() { # module mode -> sets rc
+  f="$_wsp_dir/workstationadmin-mod-$1.txt"
+  if ! wsp_check_file "$f"; then wsp_emit "type=module-refused	module=$1	reason=trust-check"; rc=4; return; fi
+  case "$1" in admin-session|gates) runner="/bin/bash";; *) runner="sudo /bin/bash";; esac
+  if [ "$WSP_FIXTURE" -eq 1 ]; then runner="/bin/bash"; fi
+  # Forwarding is checked (D2-05): a failed write makes the run exit 3.
+  printf '%s\n' "$WSP_RID_SALT" | $runner "$f" --mode "$2" --run-id "$WSP_RUN_ID" --salt-stdin | {
+    fw=0; while IFS= read -r line; do
+      case "$line" in WSPREC*) printf '%s\n' "$line" >&"$WSP_OUT_FD" || fw=1;; esac; done; exit "$fw"; }
+  set -- "${PIPESTATUS[@]}"; rc=$2
+  if [ "$3" -ne 0 ]; then WSP_WRITE_FAIL=1; fi
+}
+if [ "$WSP_MODE" = apply ]; then
+  runmod preflight inspect
+  if [ "$rc" -ne 0 ]; then
+    for m in $mods; do [ "$m" = preflight ] || wsp_emit "type=module-refused	module=$m	reason=preflight-not-clear"; done
+    wsp_emit "type=run-end	exit=4"; exit 4
+  fi
+  _m2=""; wsp_words "$mods"; for _m in $WSP_WORDS; do [ "$_m" = preflight ] || _m2="$_m2$_m "; done; mods=$_m2
+fi
+for m in $mods; do
+  runmod "$m" "$WSP_MODE"
+  case "$rc" in 0) ;; 2) [ $worst -lt 2 ] && worst=2;; 3) [ $worst -lt 3 ] && worst=3;; *) worst=4;; esac
+done
+if [ "${WSP_WRITE_FAIL:-0}" -eq 1 ]; then worst=3; echo "REPORT WRITE FAILED" >&5; fi
+wsp_emit "type=run-end	exit=$worst" || worst=3
+exit $worst

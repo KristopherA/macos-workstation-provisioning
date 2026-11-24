@@ -1,0 +1,77 @@
+START HERE: macOS provisioning suite, release 0.18-d18-draft5
+================================================================
+
+STATUS
+PARTIAL. Review record verdict: APPROVED PARTIAL, 0 blockers.
+NOT tested on a real Mac. NOT tested on Bash 3.2. Read LIMITS.txt first.
+Use it only on a disposable test Mac with written authorization.
+
+1. WHAT THIS IS
+This is a set of Bash scripts and documents for the setup and audit of macOS
+workstations. All files are plain text. The script files have the name
+extension .txt. Run each script with /bin/bash. Do not make them executable.
+The source is the archive macos-provisioning-suite-code-snapshot-d18.tar,
+SHA256 ae0ccc3fd55331372bcb219bb602fd37a697904d42ecbf5f99d513796bc57241.
+
+2. FILES
+Read first:
+  START-HERE.txt          This file.
+  LIMITS.txt              What was tested and what was not tested.
+  QA-EVIDENCE.txt         Independent test, scan and hash results.
+  SHA256SUMS.txt          SHA256 of every other file in this package.
+Documents (STE):
+  documentation-runbook.txt           Procedures. Use this to run the suite.
+  documentation-plan.txt              Design and decisions.
+  documentation-config-worksheet.txt  Settings that the operator must supply.
+  documentation-coverage-matrix.txt   Requirement to test coverage.
+  documentation-validation.txt        Document checks and known stale lines.
+Launcher and library:
+  workstationadmin-provision.txt      Launcher. Start all modules here.
+  workstationadmin-lib.txt            Shared functions.
+Modules:
+  workstationadmin-mod-preflight.txt  workstationadmin-mod-accounts.txt
+  workstationadmin-mod-names.txt      workstationadmin-mod-ssh.txt
+  workstationadmin-mod-ard.txt        workstationadmin-mod-filevault.txt
+  workstationadmin-mod-updates.txt    workstationadmin-mod-userprefs.txt
+  workstationadmin-mod-power.txt      workstationadmin-mod-shared.txt
+  workstationadmin-mod-apps.txt       workstationadmin-mod-admin-session.txt
+  workstationadmin-mod-firstlogin.txt workstationadmin-mod-gates.txt
+  workstationadmin-mod-firewall.txt
+User scripts:
+  UserSpace-audit.txt                 Audit, run by the target user.
+  UserSpace-preferences.txt           User preferences, run by the target user.
+QA tools (they do not run the files that they scan):
+  workstationadmin-test-harness.txt   Synthetic test harness (Linux or Mac).
+  workstationadmin-static-check.txt   Static checks.
+  workstationadmin-scrub-check.txt    Privacy scrub for a release export.
+Reference:
+  code-manifest.txt                   Change record and SHA256 of the code files.
+  interface-plan-for-documentation.txt  Interface notes. The documents
+                                      are authoritative if they differ.
+
+3. HOW TO START
+1. Verify the files:  shasum -a 256 -c SHA256SUMS.txt
+   (On Linux: sha256sum -c SHA256SUMS.txt)
+2. Read LIMITS.txt.
+3. Read documentation-runbook.txt, section 1. Do all readiness steps.
+4. Complete documentation-config-worksheet.txt. Keep site values outside
+   the suite folder.
+5. Follow documentation-runbook.txt in its section order. Start with inspect
+   mode. Use apply mode only with explicit authorization.
+
+4. SAFETY
+1. Use only a disposable test Mac with written authorization. Do not use a
+   production workstation.
+2. Inspect mode is the default. Inspect mode makes no changes.
+3. Apply mode needs the launcher APPLY prompt, the root apply gate, the
+   consent keys in trusted policy, and the typed confirmation of each module.
+4. The admin-session Dock and Finder writes are disabled. This is by decision.
+   That module inspects only. Do not enable it.
+5. FileVault: the suite never prints, reads or rotates a recovery key. It can
+   enable FileVault and write a NEW key file only when the runbook section 7
+   settings are made. If they are not made, enable FileVault manually in
+   System Settings and save the key manually, as the runbook tells you.
+6. This package contains no FileVault key, no real audit report, and no
+   fixture with real values. Do not add them.
+7. Do not run the launcher as root or through sudo.
+8. Stop at the first failed change. Examine the Mac before you try again.

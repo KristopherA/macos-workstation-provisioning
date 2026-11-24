@@ -1,0 +1,106 @@
+#!/bin/bash
+# workstationadmin-mod-preflight.txt - platform and policy inspection
+# Account: workstationadmin via launcher.
+# Root: required (sudo) for privileged reads; read-only, changes nothing.
+# Bash 3.2, stock macOS tools only.
+# Dry run (inspect) is the default; changes happen only with --mode apply.
+# No secret is ever accepted as an argument, written to a log or reported.
+# Requirements: R01 R02 P01. Inspect only; changes nothing in any mode.
+# ---- trusted bootstrap (CR01) ------------------------------------------
+# Runs before anything else: fixed PATH, readonly EUID check, then trust checks
+# on the suite directory, every ancestor and the library, using only absolute
+# tool paths. The fixture hook is honoured only off macOS, as non-root, under a
+# canonical /tmp path; otherwise it is refused, never silently relaxed.
+set +x +a   # no tracing; no allexport (D3-03)
+# d14 (reviewer S1): every function that exists at this point was imported from the caller's environment (exported BASH_FUNC_*) or
+# defined by a BASH_ENV startup file; none is trusted, so all are discarded before the first tool name is resolved. BASH_ENV
+# itself has already been read by this shell (it cannot be cleared in time); unsetting it only protects the child shells.
+for _wsp_f in $(compgen -A function); do unset -f "$_wsp_f"; done
+unset BASH_ENV ENV
+PATH=/usr/bin:/bin:/usr/sbin:/sbin; export PATH
+case "${EUID:-x}" in ''|*[!0-9]*) echo "REFUSED: EUID unreadable" >&2; exit 4;; esac
+_wsp_os=$(/usr/bin/uname -s 2>/dev/null || /bin/uname -s)
+_wsp_fx=0
+if [ -n "${WSP_FIXTURE_ROOT:-}" ]; then
+  if [ "$_wsp_os" = Darwin ] || [ -d /System/Library/CoreServices ] || [ "$EUID" -eq 0 ]; then echo "REFUSED: fixture hook not allowed here" >&2; exit 4; fi
+  _wsp_c=$(cd "$WSP_FIXTURE_ROOT" 2>/dev/null && pwd -P) || { echo "REFUSED: fixture root" >&2; exit 4; }
+  case "$_wsp_c" in /tmp/?*) ;; *) echo "REFUSED: fixture root must canonically be under /tmp" >&2; exit 4;; esac
+  [ "$_wsp_c" = "${WSP_FIXTURE_ROOT%/}" ] || { echo "REFUSED: fixture root has a symlink" >&2; exit 4; }
+  _wsp_fx=1
+fi
+# Inherited suite-internal variables are discarded, including their export
+# attribute (documentation D4-1): unset removes both. Only the validated fixture hook stays.
+for _wsp_v in $(compgen -v WSP_); do case "$_wsp_v" in WSP_FIXTURE_ROOT) ;; *) unset "$_wsp_v";; esac; done
+[ "$_wsp_fx" -eq 1 ] || unset WSP_FIXTURE_ROOT
+_wsp_st() { if [ "$_wsp_os" = Darwin ]; then /usr/bin/stat -f "$1" "$2"; else /usr/bin/stat -c "$3" "$2"; fi; }
+_wsp_noacl() { # deny by default (D3-01): "+" refuses; "@" needs a one-line "ls -lde"
+  _wsp_l=$(/bin/ls -ld "$1" 2>/dev/null) || return 1
+  _wsp_l=${_wsp_l%% *}
+  case "$_wsp_l" in
+    ??????????|??????????.) return 0;;
+    ??????????@) _wsp_n=$(/bin/ls -lde "$1" 2>/dev/null) || return 1
+                 [ "$(printf '%s\n' "$_wsp_n" | /usr/bin/wc -l | /usr/bin/tr -d ' ')" = 1 ];;
+    *) return 1;;
+  esac
+}
+_wsp_trust() { # path: not symlink, no ACL, owner root|workstationadmin (fixture: caller), not group/world writable
+  [ -L "$1" ] && return 1
+  _wsp_noacl "$1" || return 1
+  _wsp_o=$(_wsp_st %Su "$1" %U) || return 1; _wsp_m=$(_wsp_st %Lp "$1" %a) || return 1
+  case "$_wsp_o" in root|workstationadmin) ;; *) [ "$_wsp_fx" -eq 1 ] && [ "$_wsp_o" = "$(/usr/bin/id -un)" ] || return 1;; esac
+  case "$_wsp_m" in *[2367]?|*[2367]) case "$_wsp_m" in 1???) [ -d "$1" ] && [ "$1" != "$_wsp_dir" ] || return 1;; *) return 1;; esac;; esac
+  return 0
+}
+case "$0" in /*) _wsp_self="$0";; *) _wsp_self="$(pwd -P)/$0";; esac
+_wsp_dir=$(cd "${_wsp_self%/*}" 2>/dev/null && pwd -P) || { echo "REFUSED: suite directory" >&2; exit 4; }
+_wsp_a="$_wsp_dir"
+while :; do _wsp_trust "$_wsp_a" || { echo "REFUSED: untrusted suite directory or ancestor" >&2; exit 4; }; [ "$_wsp_a" = / ] && break; _wsp_a=${_wsp_a%/*}; [ -n "$_wsp_a" ] || _wsp_a=/; done
+_wsp_lib="$_wsp_dir/workstationadmin-lib.txt"
+if ! { [ -f "$_wsp_lib" ] && _wsp_trust "$_wsp_lib"; }; then echo "REFUSED: library missing or untrusted" >&2; exit 4; fi
+_wsp_trust "$_wsp_dir/${_wsp_self##*/}" || { echo "REFUSED: entry script untrusted" >&2; exit 4; }
+# Residual risk: a process running as root or workstationadmin can still replace
+# files between this check and use. Those identities are trusted by design.
+# shellcheck source=/dev/null
+. "$_wsp_lib"
+WSP_MODULE="preflight"
+WSP_GATE_NEEDS=root
+wsp_parse_mode "$@"
+ov=$(wsp_read_os_version) || ov=""
+build=$(wsp_read_os_build) || build=""
+os=${ov%%.*}
+want=$(wsp_policy TARGET_OS_MAJOR) || want=""
+if [ -z "$os" ] || [ -z "$build" ]; then wsp_status UNKNOWN P01 target-os "OS version or build unreadable or malformed" "${want:-unset}" unknown effective-cli
+elif [ -z "$want" ]; then wsp_status BLOCKED_POLICY P01 target-os "TARGET_OS_MAJOR not set in policy (P01)"
+elif [ "$os" = "$want" ]; then wsp_status ALREADY_CORRECT P01 target-os "macOS major matches policy" "$want" "$os" effective-cli
+else wsp_status BLOCKED_POLICY P01 target-os "macOS major $os does not match policy $want"; fi
+allowed=$(wsp_policy ALLOWED_BUILDS) || allowed=""
+if [ -z "$build" ]; then wsp_status UNKNOWN P01 build "build unreadable" listed unknown effective-cli; else
+case " $allowed " in *" $build "*) wsp_status ALREADY_CORRECT P01 build "build $build listed";;
+  *) wsp_status BLOCKED_POLICY P01 build "build $build not in ALLOWED_BUILDS";; esac; fi
+if arch=$(wsp_read_arch); then wsp_status ALREADY_CORRECT R11 architecture "detected $arch (informational)"
+else wsp_status UNKNOWN R11 architecture "architecture unreadable or malformed" arm64-or-x86_64 unknown effective-cli; fi
+ostate=$(wsp_user_state "$WSP_OPERATOR") || ostate=unknown
+case "$ostate" in yes)
+  wsp_run _u dscl . -read "/Users/$WSP_OPERATOR" UniqueID
+  uid=""; if [ "$WSP_RC" -eq 0 ]; then uid=$(wsp_field "$_u" UniqueID:) || uid=""; fi
+  case "$uid" in ''|*[!0-9]*) wsp_status UNKNOWN R03 operator-record "record exists but UniqueID unreadable" present unknown record "$WSP_RC" "$WSP_ERRCLASS";;
+    *) wsp_status ALREADY_CORRECT R03 operator-record "record present with numeric UID (does not prove secure token or volume ownership)" present present record 0;; esac
+  case "$(wsp_admin_state "$WSP_OPERATOR")" in
+    yes) wsp_status ALREADY_CORRECT R03 operator-admin "member of admin" admin admin record;;
+    no) wsp_status FAILED R03 operator-admin "operator is not an administrator" admin standard record;;
+    *) wsp_status UNKNOWN R03 operator-admin "membership not determinable" admin unknown record;;
+  esac
+  ;;
+no) wsp_status FAILED R03 operator-record "workstationadmin record missing";;
+*) wsp_status UNKNOWN R03 operator-record "operator record existence not determinable" present unknown record;; esac
+case "$(wsp_mdm_state)" in
+  yes) wsp_status ALREADY_CORRECT P01 mdm "MDM enrolled or DEP-registered (treated as managed): managed payloads may override local settings" read yes effective-cli 0;;
+  no) wsp_status ALREADY_CORRECT P01 mdm "not MDM enrolled (M routes unavailable)" read no effective-cli 0;;
+  *) wsp_status UNKNOWN P01 mdm "enrollment state unreadable or unrecognized; write modules refuse apply" read unknown effective-cli;;
+esac
+case "$(wsp_sip_state)" in
+  enabled) wsp_status ALREADY_CORRECT R09 sip "SIP enabled (suite never changes it)" enabled enabled effective-cli 0;;
+  other) wsp_status BLOCKED_POLICY R09 sip "SIP reported disabled; write modules refuse apply" enabled disabled effective-cli 0;;
+  *) wsp_status UNKNOWN R09 sip "SIP state unreadable or unrecognized; write modules refuse apply" enabled unknown effective-cli;;
+esac
+wsp_finish

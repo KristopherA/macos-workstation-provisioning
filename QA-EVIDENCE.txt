@@ -1,0 +1,76 @@
+QA EVIDENCE: macOS provisioning suite, release 0.18-d18-draft5
+================================================================
+Independent test run. Date: 24 Nov 2026.
+Result: PASS on synthetic fixtures in a Linux sandbox. NOT Mac validation.
+
+1. INPUTS
+Archive: macos-provisioning-suite-code-snapshot-d18.tar
+  sha256 ae0ccc3fd55331372bcb219bb602fd37a697904d42ecbf5f99d513796bc57241
+  label 0.18-d18-draft5. Sidecar .sha256 matches. Members: 24 regular files,
+  0 symlinks, 0 dirs.
+In-archive manifest code-manifest.txt:
+  23 of 23 listed file hashes match (the manifest does not list itself).
+  The interface file is interface-plan-for-documentation.txt. The earlier
+  interface file name is absent from the archive and from the documents.
+Locked documents (mode 0444; hashes match before and after the test run):
+  9e806723a3aeedd5d1b756cc3c1a5f8cba2de8e983ef73050be1f22b981bb594  documentation-plan.txt
+  74f45713db58a8152ce38bd7431dd07446faccedf8c19e729d4ac29aec9c7dac  documentation-runbook.txt
+  b0b23722bfdf3a90aa56f8836cf9b4f464ddab8a87bbd216493d2422a7464144  documentation-config-worksheet.txt
+  83089883b97ca3ab3dce4de930c6ce4126fe3afc41f07b88619e718df2497dd4  documentation-coverage-matrix.txt
+  d45b8b56fbcd5bab59aaca801eb72c7b73ae6af9a10cd282941da7a42bc5203f  documentation-validation.txt
+Review record: APPROVED PARTIAL, 0 blockers, on the archive above.
+
+2. SANDBOX (bubblewrap, proven before the run)
+Non-root; NoNewPrivs 1; CapEff 0; only loopback interface (no network);
+writes denied to /suite (EROFS), /usr (EROFS); the host work and home
+folders are absent; HOME=/tmp on a private tmpfs; host /tmp not visible;
+env cleared (env -i). Suite bound read-only. (Sandbox /etc is an empty bwrap
+dir with passwd/group bound read-only; it is not the host /etc.)
+
+3. HARNESS (workstationadmin-test-harness.txt, unchanged, run alone, once)
+Outer limit: timeout 2700.
+  SUMMARY pass=510 fail=0 (synthetic fixtures; NOT Mac validation)
+  runs=1692 timeouts=0 ticker_max_gap=2s stall_total=0s
+  exit 0; wall 1688.5 s; stderr 0 bytes; 0 "not ok" lines;
+  0 "DIAG timeout" lines.
+  No other harness process ran during the run. The full output log was
+  deleted after the summary was recorded.
+
+4. PRIVACY SCRUB (workstationadmin-scrub-check.txt, inside the same sandbox)
+Clean export, 24 archive files + 5 documents, no .git, no symlinks:
+  --site-file (kept outside this package, mode 600) --strict-docs --expect-exempt 3
+  exit 0: SCRUB-CHECK hits=0 dochits=0 files=29 exempt=3 mode=site-patterns strict-docs=1
+Exemption token appears only in workstationadmin-scrub-check.txt, lines 29, 109, 128.
+Negative control A (symlink + .git dir added): exit 1, hits=3
+  (planted-link symlink; .git and .git/config git-metadata). Fails closed.
+Negative control B (extra exemption-token line in code-manifest.txt): exit 1,
+  hits=1, code-manifest.txt:284 exempt-token-misuse. Fails closed.
+
+5. SECRET SCAN (gitleaks 8.30.1, dir mode, default rules, no allowlist)
+Clean export: exit 0, 0 findings.
+Positive control (two random canary tokens added to a scratch copy):
+  exit 1, 2 findings: aws-access-token workstationadmin-mod-power.txt:104,
+  github-pat workstationadmin-mod-power.txt:105. Canary caught.
+
+6. IDENTIFIER / PRIVACY GREP (clean export, case-insensitive, content and
+   file names)
+Build paths, role and bot names, employer name and domain, the meeting
+abbreviation, place and time-zone names and offsets, personal names,
+internal policy ids and distribution-restriction wording on the release
+word list: 1 content hit, 0 file-name hits, 29 files. The hit is
+documentation-coverage-matrix.txt line 116, an operator instruction not to
+publish site bookmark or template names. It is guidance, not a
+distribution restriction on this suite.
+Private IPv4: 2 synthetic fixture lines (harness:1633, harness:3685, 10.0.0.5).
+FileVault key pattern: 2 placeholders (interface-plan:701 XXXX-..., harness:27
+synthetic canary QQQQ-WWWW-...). E-mail addresses: synthetic only
+(a@example.com, b@x.test, c@d.invalid). Password-manager references 0.
+No FileVault key material, no audit report, no fixture with real values.
+
+7. PACKAGE CHECKS (this folder, all files including SHA256SUMS.txt)
+Scrub (same command, --strict-docs --expect-exempt 3): exit 0, hits=0,
+  dochits=0, files=33, exempt=3.
+gitleaks dir, default rules: exit 0, 0 findings.
+Identifier grep (same word list): the same 1 guidance line, no other hit.
+SHA256SUMS.txt lists every other file in this folder (32 files).
+All files mode 0444.
